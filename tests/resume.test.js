@@ -50,3 +50,15 @@ test("langues preferees", () => {
     assert.equal(resume.pickSubtitle(subs, "en", "fre"), 3);
     assert.equal(resume.pickSubtitle(subs, "off", "eng"), 0);
 });
+
+test("serie : episode a reprendre", () => {
+    const meta = { videos: [{ id: "s:1:1", season: 1, episode: 1 }, { id: "s:1:2", season: 1, episode: 2 },
+                            { id: "s:1:3", season: 1, episode: 3 }] };
+    let p = {};
+    assert.equal(resume.seriesResume(meta, p, "A"), null, "jamais vue");
+    p = resume.record(p, "A", "s:1:1", 600000, 1200000, 1);
+    p = resume.record(p, "A", "s:1:2", 300000, 1200000, 5);
+    assert.equal(resume.seriesResume(meta, p, "A").id, "s:1:2", "le plus recent");
+    p = resume.record(p, "A", "s:1:2", 1190000, 1200000, 9);
+    assert.equal(resume.seriesResume(meta, p, "A").id, "s:1:3", "fini : le suivant");
+});

@@ -92,3 +92,21 @@ function pickSubtitle(options, pref, audioLanguage) {
     const j = options.findIndex(o => o.kind !== "off" && matches(o.language, lang));
     return j === -1 ? 0 : j;
 }
+
+// Episode a proposer en ouvrant une serie : celui en cours le plus recent, sinon le suivant
+// du dernier episode vu, sinon null (premiere visite).
+function seriesResume(meta, positions, accountId) {
+    const videos = ((meta && meta.videos) || []).filter(v => typeof v.season === "number" && v.season > 0);
+    let best = null;
+    let bestAt = -1;
+    videos.forEach(v => {
+        const e = (positions || {})[key(accountId, v.id)];
+        if (e && e.at > bestAt) {
+            best = { video: v, entry: e };
+            bestAt = e.at;
+        }
+    });
+    if (!best)
+        return null;
+    return best.entry.done ? nextEpisode(meta, best.video.id) : best.video;
+}

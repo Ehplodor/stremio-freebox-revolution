@@ -29,6 +29,7 @@ Item {
     property var addons: []
     property string screen: "home"       // home | search | settings | details | player | account | sort
     property string lastTab: "home"
+    property string returnScreen: "home"   // ecran a retrouver en quittant le tri ou le compte
     property var sortPrefs: Sorting.normalize(null)
     property string authKey: ""
     property string accountId: ""
@@ -97,9 +98,12 @@ Item {
             settings.pcId = s.pcId;
             settings.pcName = s.pcName;
             settings.pcHost = pcHost;
+            const stremioWasOk = !pcInfo || pcInfo.stremio.ok;
             pcInfo = s;
-            if (!s.stremio.ok)
+            if (!s.stremio.ok && stremioWasOk)
                 toast("Stremio ne tourne pas sur « " + s.pcName + " » (Reglages > Demarrer Stremio)", "warn");
+            else if (s.stremio.ok && !stremioWasOk)
+                toast("Stremio est de nouveau actif");
             refreshSettingsRows();
         }).catch(e => {
             if (pcOk)
@@ -235,15 +239,20 @@ Item {
         if (screen === "player") {
             stopPlayer();
         } else if (screen === "sort") {
-            screen = "details";
-            refreshStreams();
-            details.forceActiveFocus();
+            if (returnScreen === "details") {
+                screen = "details";
+                refreshStreams();
+                details.forceActiveFocus();
+            } else {
+                showTab(2);
+            }
         } else if (screen === "details") {
             if (!details.back())
                 showTab(["home", "search", "settings"].indexOf(lastTab));
         } else if (screen === "account") {
             linkTimer.stop();
-            showTab(2);
+            showTab(["home", "search", "settings"].indexOf(returnScreen) === -1 ? 0
+                    : ["home", "search", "settings"].indexOf(returnScreen));
         } else if (screen === "search" || screen === "settings") {
             showTab(0);
         } else {
@@ -274,7 +283,7 @@ Item {
             if (type === "series" && episodes.length) {
                 details.episodes = episodes;
                 // Reprendre la serie : episode en cours (ou suivant le dernier vu)
-                const resumeVideo = episodes.find(v => Resume.resumeAt(positions, accountId, v.id) > 0);
+                const resumeVideo = Resume.seriesResume(meta, positions, accountId);
                 if (resumeVideo)
                     selectEpisode(resumeVideo);
                 else if (Config.AUTOTEST && Config.AUTOTEST.episode)
@@ -317,6 +326,11 @@ Item {
             }
             current.streamsProgress = answered < total ? "  ·  " + answered + "/" + total + " addons" : "";
             refreshStreams();
+            const top = details.streams[0];
+            if (current.autoPlay && top && top.info && top.info.cached === true) {
+                current.autoPlay = false;
+                playBest();
+            }
             if (items.length)
                 details.focusStreams();
         }).then(() => {
@@ -343,6 +357,7 @@ Item {
     }
 
     function openSortSettings() {
+        returnScreen = screen;
         screen = "sort";
         sortPage.prefs = sortPrefs;
         sortPage.forceActiveFocus();
@@ -581,6 +596,8 @@ Item {
     // ===================== Compte =====================
 
     function openAccount() {
+        if (screen !== "account")
+            returnScreen = screen;
         screen = "account";
         accountPage.forceActiveFocus();
         accountPage.status = "";
@@ -680,16 +697,25 @@ Item {
         refreshSettingsRows();
     }
 
-    // Debit : telecharge un fichier de l'appli depuis l'agent (approximation suffisante).
+    // Debit reel PC -> Player : l'agent envoie 4 Mo.
     function measureSpeed() {
         speedText = "mesure…";
         refreshSettingsRows();
+        const bytes = 4 * 1024 * 1024;
         const start = Date.now();
-        Http.fetchText(cfg.agent + "/fbx/app/js/core/sorting.js?" + start).then(text => {
+        const xhr = new XMLHttpRequest();
+        xhr.responseType = "arraybuffer";
+        xhr.onreadystatechange = () => {
+            if (xhr.readyState !== XMLHttpRequest.DONE)
+                return;
             const ms = Math.max(1, Date.now() - start);
-            speedText = Math.round(text.length / 1024) + " ko en " + ms + " ms";
+            const got = xhr.status === 200 && xhr.response ? xhr.response.byteLength : 0;
+            speedText = got ? (got * 8 / 1000 / ms).toFixed(1) + " Mbit/s"
+                              + (got * 8 / 1000 / ms < 6 ? "  ·  juste pour la 1080p" : "") : "echec";
             refreshSettingsRows();
-        }).catch(() => { speedText = "echec"; refreshSettingsRows(); });
+        };
+        xhr.open("GET", cfg.agent + "/fbx/api/speedtest?bytes=" + bytes + "&t=" + start);
+        xhr.send();
     }
 
     // ===================== Interface =====================

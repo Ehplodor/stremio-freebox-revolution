@@ -434,6 +434,25 @@ def agent_route(handler, method):
             "stremio": stremio_status(handler.stremio),
             "testAddon": handler.test_addon or None,
         })
+    elif path == "/fbx/api/speedtest":
+        # Mesure du debit vers le Player : n octets (8 Mo au plus).
+        try:
+            size = max(1, min(int(query_param(handler.path, "bytes") or 4194304), 8388608))
+        except ValueError:
+            size = 4194304
+        handler.send_response(200)
+        handler.send_header("Content-Type", "application/octet-stream")
+        handler.send_header("Content-Length", str(size))
+        handler.send_header("Cache-Control", "no-store")
+        handler.end_headers()
+        if method != "HEAD":
+            block = b"\0" * 65536
+            try:
+                while size > 0:
+                    handler.wfile.write(block[:min(size, 65536)])
+                    size -= 65536
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                pass
     elif path == "/fbx/api/start-stremio" and method == "POST":
         ok, message = start_stremio(handler.stremio)
         send_json(handler, 200 if ok else 503, {"ok": ok, "message": message})
