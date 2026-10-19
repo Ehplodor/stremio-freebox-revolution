@@ -22,6 +22,20 @@ FocusScope {
     property string subtitleLine: ""     // episode, source... sous le titre
     property string nextTitle: ""        // episode suivant ("" : aucun)
     property bool autoNext: true         // enchainer l'episode suivant
+    // Decalage des sous-titres (ms) : positif = affiches plus tard, negatif = plus tot.
+    property int subDelay: 0
+
+    function shiftSubtitles(step) {
+        subDelay = step === 0 ? 0 : Math.max(-60000, Math.min(60000, subDelay + step));
+        delayHint.show();
+    }
+
+    function delayText() {
+        if (subDelay === 0)
+            return "0 s (synchro d'origine)";
+        return (subDelay > 0 ? "+" : "-") + (Math.abs(subDelay) / 1000).toFixed(2).replace(".", ",") + " s"
+            + (subDelay > 0 ? "  ·  plus tard" : "  ·  plus tot");
+    }
     signal nextRequested()
     readonly property int positionMs: player.position
     readonly property int durationMs: player.duration
@@ -150,7 +164,7 @@ FocusScope {
         style: Text.Outline
         styleColor: "black"
         font.pixelSize: 34
-        text: page.cues.length ? Vtt.textAt(page.cues, player.position) : ""
+        text: page.cues.length ? Vtt.textAt(page.cues, player.position - page.subDelay) : ""
     }
 
     // ----- Affichage par-dessus la video -----
@@ -247,7 +261,7 @@ FocusScope {
                     font.pixelSize: T.fontSmall
                     text: player.playbackState === MediaPlayer.PausedState ? "❚❚  Pause  ·  OK pour reprendre"
                           : player.status === MediaPlayer.Stalled || player.status === MediaPlayer.Loading ? "Chargement…"
-                          : "◀ -10 s   ·   OK pause   ·   +30 s ▶   ·   ▲ Audio et sous-titres"
+                          : "◀ -10 s   ·   OK pause   ·   +30 s ▶   ·   ▲ Audio et sous-titres   ·   4/6 synchro"
                 }
                 Text {
                     anchors.right: parent.right
@@ -390,9 +404,37 @@ FocusScope {
             font.bold: true
             text: "Sous-titres"
         }
+        // Synchronisation : Gauche/Droite = -/+ 0,25 s ; OK = remise a zero ; Bas = liste.
+        Rectangle {
+            id: syncRow
+            anchors { left: subTitle.left; right: parent.right; rightMargin: 20; top: subTitle.bottom; topMargin: 10 }
+            height: 56
+            radius: T.radiusSmall
+            color: activeFocus ? T.surfaceHigh : Qt.rgba(1, 1, 1, 0.05)
+            border.color: activeFocus ? T.focus : "transparent"
+            border.width: 2
+            Text {
+                anchors { left: parent.left; leftMargin: 12; top: parent.top; topMargin: 6 }
+                text: "Synchronisation"
+                color: T.textMuted
+                font.pixelSize: T.fontTiny + 1
+            }
+            Text {
+                anchors { left: parent.left; leftMargin: 12; bottom: parent.bottom; bottomMargin: 6 }
+                text: (syncRow.activeFocus ? "◀  " : "") + page.delayText() + (syncRow.activeFocus ? "  ▶" : "")
+                color: T.text
+                font.pixelSize: T.fontSmall + 1
+                font.bold: true
+            }
+            Keys.onLeftPressed: page.shiftSubtitles(-250)
+            Keys.onRightPressed: page.shiftSubtitles(250)
+            Keys.onReturnPressed: page.shiftSubtitles(0)
+            Keys.onEnterPressed: page.shiftSubtitles(0)
+            Keys.onDownPressed: subList.forceActiveFocus()
+        }
         ListView {
             id: subList
-            anchors { left: subTitle.left; right: parent.right; rightMargin: 20; top: subTitle.bottom; topMargin: 10; bottom: parent.bottom; bottomMargin: 20 }
+            anchors { left: subTitle.left; right: parent.right; rightMargin: 20; top: syncRow.bottom; topMargin: 10; bottom: parent.bottom; bottomMargin: 20 }
             clip: true
             model: page.subtitleTracks
             highlightMoveDuration: 0
@@ -408,6 +450,12 @@ FocusScope {
                 text: (index === page.subtitleIndex ? "✓  " : "     ") + modelData.label
             }
             Keys.onLeftPressed: if (page.audioTracks.length) audioList.forceActiveFocus()
+            Keys.onUpPressed: {
+                if (currentIndex === 0)
+                    syncRow.forceActiveFocus();
+                else
+                    decrementCurrentIndex();
+            }
             Keys.onReturnPressed: {
                 if (currentIndex !== page.subtitleIndex)
                     page.subtitleChosen(currentIndex);
@@ -420,6 +468,35 @@ FocusScope {
                 event.accepted = true;
                 menu.close();
             }
+        }
+    }
+
+    Rectangle {
+        id: delayHint
+        function show() {
+            opacity = 1;
+            delayHideTimer.restart();
+        }
+        anchors { horizontalCenter: parent.horizontalCenter; top: parent.top; topMargin: 60 }
+        width: delayLabel.implicitWidth + 48
+        height: 52
+        radius: 26
+        color: Qt.rgba(0.07, 0.09, 0.13, 0.92)
+        border.color: T.accent
+        opacity: 0
+        visible: opacity > 0 && !menu.visible
+        Behavior on opacity { NumberAnimation { duration: 200 } }
+        Text {
+            id: delayLabel
+            anchors.centerIn: parent
+            text: "Sous-titres : " + page.delayText() + "   (4 / 6 · 5 : zero)"
+            color: T.text
+            font.pixelSize: T.fontSmall + 1
+        }
+        Timer {
+            id: delayHideTimer
+            interval: 2500
+            onTriggered: delayHint.opacity = 0
         }
     }
 
@@ -489,6 +566,18 @@ FocusScope {
         case Qt.Key_Menu:
             menu.open();
             break;
+        case Qt.Key_4:
+            page.shiftSubtitles(-250);
+            event.accepted = true;
+            return;
+        case Qt.Key_6:
+            page.shiftSubtitles(250);
+            event.accepted = true;
+            return;
+        case Qt.Key_5:
+            page.shiftSubtitles(0);
+            event.accepted = true;
+            return;
         default:
             return;
         }

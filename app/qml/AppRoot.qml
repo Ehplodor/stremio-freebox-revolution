@@ -509,6 +509,7 @@ Item {
         const option = page.subtitleTracks[index];
         page.subtitleIndex = index;
         page.cues = [];
+        page.subDelay = 0;                 // autre fichier de sous-titres : autre decalage
         if (!automatic) {
             const lang = (option.language || "").toLowerCase();
             settings.subLang = option.kind === "off" ? "off" : /^(fre|fra|fr)$/.test(lang) ? "fr"
