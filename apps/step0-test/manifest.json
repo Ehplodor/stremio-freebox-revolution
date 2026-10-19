@@ -1,0 +1,14 @@
+{
+    "name": "Stremio Step0 Test",
+    "identifier": "org.ehplodor.stremiofbx.step0",
+    "description": "Tests de faisabilite : version Qt, XHR HTTPS, lecture MP4/HLS/MKV",
+    "capabilities": {
+        "net_wan": "required"
+    },
+    "entryPoints": {
+        "main": {
+            "file": "main.qml",
+            "default": true
+        }
+    }
+}
