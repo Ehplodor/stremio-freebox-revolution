@@ -79,6 +79,7 @@ FocusScope {
         cellHeight: 60
         focus: true
         interactive: false
+        keyNavigationEnabled: true   // sinon les fleches sont desactivees avec interactive: false (Qt >= 5.7)
         model: page.keys
         highlightMoveDuration: 0
         delegate: Item {

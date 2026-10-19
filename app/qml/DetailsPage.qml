@@ -190,6 +190,7 @@ FocusScope {
         orientation: ListView.Horizontal
         spacing: 14
         interactive: false
+        keyNavigationEnabled: true   // sinon les fleches sont desactivees avec interactive: false (Qt >= 5.7)
         focus: true
         model: [
             { key: "play", label: page.resumeText ? "▶  " + page.resumeText : "▶  Lecture", primary: true },
