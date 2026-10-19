@@ -54,6 +54,29 @@ Analyse :
 - Contournement retenu : un petit relais sur le PC (`/stremio/...` dans `tools/fbx_qml_run.py`) qui retire cette piste ; les sous-titres seront affichés par l'appli elle-même (calque `Text` alimenté par `/subtitles.vtt` ou `subtitle0.m3u8`). À terme, ce relais deviendra un petit service compagnon sur le PC, à côté de Stremio.
 - Le flux transcodé fait environ 6 Mbit/s pour cette mire très chargée ; avec 9,3 Mbit/s mesurés entre le PC et la box, la marge est faible pour du 1080p. Brancher le Player en Ethernet ou limiter le débit de transcodage est à prévoir.
 
+## Optimisation du débit
+
+Débit mesuré entre le PC et la box : 9,3 Mbit/s. Débit du flux transcodé (3 segments) :
+
+| Source | Sans limite | `maxWidth=1280` | `maxWidth=960` |
+|---|---|---|---|
+| Mire 720p HEVC (très chargée) | 5,9 Mbit/s | 5,9 | 3,9 |
+| HEVC 1080p 3 Mbit/s (Jellyfin) | **9,2 Mbit/s** (saturerait le lien) | **5,4** | 3,9 |
+
+Le serveur Stremio double le débit des sources HEVC faibles et ne le plafonne que par un
+réglage global (`transcodeMaxBitRate`). L'appli demande donc `maxWidth=1280` par défaut
+(l'écran du Player est en 720p), sans toucher aux réglages de Stremio.
+
+## Première version de l'appli (étapes 1 à 4, scénario automatique sur la box)
+
+- 3 addons chargés (Cinemeta, OpenSubtitles, addon de test du PC), 5 rangées de 50 titres.
+- Affiches : 21 sur 36 en échec au premier essai (WebP non décodé par le Player).
+  `images.metahub.space` est réécrit en `live.metahub.space`, qui sert du JPEG : 36 sur 36.
+  Repli pour les autres sources : `companion /image?url=` convertit le WebP en JPEG.
+- Fiche, flux, choix automatique : HEVC + AC3 + SRT transcodé via le compagnon, lecture fluide.
+- Sous-titres SRT de l'addon convertis en VTT par le serveur et affichés par l'appli,
+  synchronisés (ligne 1 à 0:09, ligne 2 à 0:19 et 0:29).
+
 ## Conséquences pour le plan
 
 - Le risque « runtime ancien » disparaît : on peut écrire le mini-core en JavaScript moderne.

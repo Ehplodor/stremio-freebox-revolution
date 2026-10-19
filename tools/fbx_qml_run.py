@@ -26,8 +26,10 @@ import struct
 import sys
 import threading
 import time
-import urllib.error
 import urllib.request
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "companion"))
+import companion  # noqa: E402
 
 MDNS_ADDR = ("224.0.0.251", 5353)
 DEVEL_SERVICE = "_fbx-devel._tcp.local."
@@ -63,40 +65,14 @@ def mdns_find(service, timeout=3.0):
 class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
     """Serveur de fichiers sans cache, avec prise en charge de Range (lecteurs video, ffmpeg)."""
 
-    STREMIO = "http://127.0.0.1:11470"
+    STREMIO = companion.DEFAULT_STREMIO
 
     def do_GET(self):
+        # /stremio/... : meme relais que le service compagnon (companion/companion.py).
         if self.path.startswith("/stremio/"):
-            return self.proxy_stremio()
+            self._proxied = True
+            return companion.relay(self, self.STREMIO, self.path[len("/stremio"):])
         return super().do_GET()
-
-    def proxy_stremio(self):
-        """Relais vers le serveur de streaming local. Retire la piste de sous-titres
-        des master.m3u8 : le lecteur HLS du Player se bloque dessus (etape 0 bis)."""
-        url = self.STREMIO + self.path[len("/stremio"):]
-        headers = {}
-        if self.headers.get("Range"):
-            headers["Range"] = self.headers["Range"]
-        try:
-            rsp = urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=120)
-        except urllib.error.HTTPError as e:
-            rsp = e
-        body = rsp.read()
-        if "/master.m3u8" in self.path.split("?")[0]:
-            lines = body.decode("utf-8").splitlines()
-            lines = [l.replace(',SUBTITLES="subtitles"', "") for l in lines
-                     if not l.startswith("#EXT-X-MEDIA:TYPE=SUBTITLES")]
-            body = ("\n".join(lines) + "\n").encode("utf-8")
-        self.send_response(rsp.status if hasattr(rsp, "status") else rsp.code)
-        for k in ("Content-Type", "Content-Range"):
-            if rsp.headers.get(k):
-                self.send_header(k, rsp.headers[k])
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        try:
-            self.wfile.write(body)
-        except (BrokenPipeError, ConnectionResetError):
-            pass
 
     def send_head(self):
         self._range = None
@@ -144,7 +120,8 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
             pass  # le lecteur a coupe la connexion (arret, saut) : normal
 
     def end_headers(self):
-        self.send_header("Accept-Ranges", "bytes")
+        if not getattr(self, "_proxied", False):
+            self.send_header("Accept-Ranges", "bytes")
         self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")

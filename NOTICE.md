@@ -9,12 +9,16 @@ suivants, publiés sous licence MIT par Smart Code OOD :
 - [stremio-video](https://github.com/Stremio/stremio-video)
 - [stremio-addon-sdk](https://github.com/Stremio/stremio-addon-sdk)
 
-Chaque fichier qui reprend du code de ces projets conserve leur mention de copyright.
+Chaque fichier qui reprend du code de ces projets conserve leur mention de copyright :
+
+- `app/js/core/playback.js` : logique de `stremio-video/src/withStreamingServer`
+  (convertStream, createTorrent, buildProxyUrl, canPlayProbe), Copyright (c) 2018 Smart Code OOD.
 
 Aucun code de `stremio-web` ni de `stremio-shell` (GPL) n'est repris : ils
 servent uniquement de référence d'ergonomie.
 
-Les exemples Freebox (`fbx/qmlapps_examples`) sont dans le domaine public.
+Les exemples Freebox (`fbx/qmlapps_examples`) et `fbx/freebox-dev-utils`
+(dont `tools/fbx_qml_run.py` est une réécriture en Python 3) sont dans le domaine public.
 La bibliothèque `libfbxqml` est fournie par le runtime du Freebox Player et
 n'est pas incluse dans ce dépôt.
 

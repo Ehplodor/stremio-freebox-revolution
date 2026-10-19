@@ -1,0 +1,14 @@
+{
+    "name": "Client Stremio (dev)",
+    "identifier": "org.ehplodor.stremiofbx",
+    "description": "Client compatible avec les addons Stremio pour le Freebox Player",
+    "capabilities": {
+        "net_wan": "required"
+    },
+    "entryPoints": {
+        "main": {
+            "file": "main.qml",
+            "default": true
+        }
+    }
+}
