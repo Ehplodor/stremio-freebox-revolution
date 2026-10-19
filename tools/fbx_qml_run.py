@@ -60,7 +60,55 @@ def mdns_find(service, timeout=3.0):
 
 
 class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
+    """Serveur de fichiers sans cache, avec prise en charge de Range (lecteurs video, ffmpeg)."""
+
+    def send_head(self):
+        self._range = None
+        rng = self.headers.get("Range", "")
+        path = self.translate_path(self.path)
+        if not rng.startswith("bytes=") or not os.path.isfile(path):
+            return super().send_head()
+        size = os.path.getsize(path)
+        start_s, _, end_s = rng[6:].split(",")[0].strip().partition("-")
+        try:
+            if start_s:
+                start = int(start_s)
+                end = min(int(end_s), size - 1) if end_s else size - 1
+            else:
+                start, end = max(size - int(end_s), 0), size - 1
+        except ValueError:
+            return super().send_head()
+        if start >= size or start > end:
+            self.send_response(416)
+            self.send_header("Content-Range", "bytes */%d" % size)
+            self.end_headers()
+            return None
+        f = open(path, "rb")
+        f.seek(start)
+        self._range = end - start + 1
+        self.send_response(206)
+        self.send_header("Content-Type", self.guess_type(path))
+        self.send_header("Content-Range", "bytes %d-%d/%d" % (start, end, size))
+        self.send_header("Content-Length", str(self._range))
+        self.end_headers()
+        return f
+
+    def copyfile(self, source, outputfile):
+        remaining = getattr(self, "_range", None)
+        try:
+            if remaining is None:
+                return super().copyfile(source, outputfile)
+            while remaining > 0:
+                chunk = source.read(min(65536, remaining))
+                if not chunk:
+                    break
+                outputfile.write(chunk)
+                remaining -= len(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # le lecteur a coupe la connexion (arret, saut) : normal
+
     def end_headers(self):
+        self.send_header("Accept-Ranges", "bytes")
         self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")

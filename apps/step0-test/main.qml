@@ -11,6 +11,7 @@ Application {
     id: app
 
     property bool playing: false
+    property string current: ""
 
     function log(msg) {
         var d = new Date();
@@ -35,7 +36,9 @@ Application {
                 return;
             }
             log("  HTTP " + status + " en " + ms + " ms, " + text.length + " octets");
-            if (status === 200)
+            if (status === 200 && picker === pickText)
+                log("  " + text.replace(/\n/g, " | ").substring(0, 300));
+            else if (status === 200)
                 log("  " + Net.summarize(text, picker));
         });
     }
@@ -54,7 +57,23 @@ Application {
         return "serveur Stremio " + v.serverVersion + ", transcodage max " + v.transcodeMaxWidth + " px";
     }
 
+    function media(name) {
+        return Qt.resolvedUrl("media/" + name).toString();
+    }
+
+    function pickProbe(d) {
+        var parts = [];
+        for (var i = 0; i < d.streams.length; i++)
+            parts.push(d.streams[i].track + " " + d.streams[i].codec);
+        return "probe : " + d.format.name + ", " + parts.join(", ");
+    }
+
+    function pickText(d) {
+        return "inattendu : JSON";
+    }
+
     function play(file, url) {
+        current = file + " " + url;
         log("Lecture " + file + " : " + url);
         playing = true;
         playerLoader.setSource(file, { url: url });
@@ -62,6 +81,7 @@ Application {
     }
 
     function stopPlayer() {
+        log("Arret de la lecture demande");
         if (playerLoader.item && playerLoader.item.stopPlayback)
             playerLoader.item.stopPlayback();
         playerLoader.source = "";
@@ -86,6 +106,15 @@ Application {
         case "fbx-hls": play("PlayerFbx.qml", Config.HLS_HTTPS); break;
         case "fbx-hls-prefix": play("PlayerFbx.qml", "hls+" + Config.HLS_HTTPS); break;
         case "fbx-mkv": play("PlayerFbx.qml", Config.MKV_H264); break;
+        case "direct-ac3": play("PlayerQtMultimedia.qml", media("h264_ac3.mkv")); break;
+        case "direct-eac3": play("PlayerQtMultimedia.qml", media("h264_eac3.mkv")); break;
+        case "direct-dts": play("PlayerQtMultimedia.qml", media("h264_dts.mkv")); break;
+        case "direct-hevc": play("PlayerQtMultimedia.qml", media("hevc_ac3_srt.mkv")); break;
+        case "probe-hevc": runXhr(Config.PC_SERVER + "/hlsv2/probe?mediaURL=" + encodeURIComponent(media("hevc_ac3_srt.mkv")), pickProbe); break;
+        case "tc-hevc": play("PlayerQtMultimedia.qml", Config.hlsv2(media("hevc_ac3_srt.mkv"), false)); break;
+        case "tc-ac3": play("PlayerQtMultimedia.qml", Config.hlsv2(media("h264_ac3.mkv"), true)); break;
+        case "tc-hevc-web": play("PlayerQtMultimedia.qml", Config.hlsv2(Config.HEVC_1080_WEB, false)); break;
+        case "subs-vtt": runXhr(Config.PC_SERVER + "/subtitles.vtt?from=" + encodeURIComponent(media("test.srt")), pickText); break;
         case "urlopen-mp4":
             log("App.urlOpen " + Config.MP4_H264);
             App.urlOpen(Config.MP4_H264, "video/mp4");
@@ -110,6 +139,15 @@ Application {
         ListElement { kind: "fbx-hls"; label: "fbx.media : HLS" }
         ListElement { kind: "fbx-hls-prefix"; label: "fbx.media : HLS avec prefixe hls+" }
         ListElement { kind: "fbx-mkv"; label: "fbx.media : MKV H.264" }
+        ListElement { kind: "direct-ac3"; label: "Direct : H.264 + AC3 5.1 (MKV)" }
+        ListElement { kind: "direct-eac3"; label: "Direct : H.264 + E-AC3 5.1 (MKV)" }
+        ListElement { kind: "direct-dts"; label: "Direct : H.264 + DTS 5.1 (MKV)" }
+        ListElement { kind: "direct-hevc"; label: "Direct : HEVC + AC3 (MKV)" }
+        ListElement { kind: "probe-hevc"; label: "Serveur PC : probe du MKV HEVC" }
+        ListElement { kind: "tc-hevc"; label: "Transcodage PC : HEVC vers HLS H.264/AAC" }
+        ListElement { kind: "tc-ac3"; label: "Transcodage PC : AC3 force vers AAC" }
+        ListElement { kind: "tc-hevc-web"; label: "Transcodage PC : HEVC 1080p internet" }
+        ListElement { kind: "subs-vtt"; label: "Serveur PC : SRT vers VTT" }
         ListElement { kind: "urlopen-mp4"; label: "Lecteur systeme : App.urlOpen MP4" }
     }
 
@@ -136,8 +174,8 @@ Application {
         autoQueue = q;
         log("== Auto : " + kind);
         runTest(kind);
-        var isVideo = kind.indexOf("qtmm") === 0 || kind.indexOf("fbx") === 0;
-        autoTimer.interval = isVideo ? 25000 : 6000;
+        var isVideo = /^(qtmm|fbx|direct|tc-)/.test(kind);
+        autoTimer.interval = isVideo ? 30000 : 6000;
         autoTimer.start();
     }
 
@@ -238,9 +276,9 @@ Application {
         log("Demarrage. Haut/Bas pour choisir, OK pour lancer, Retour pour quitter.");
         log("Serveur PC configure : " + Config.PC_SERVER);
         runProbe();
-        autoQueue = ["cinemeta", "cinemeta-http", "catalog", "pc-server",
-                     "qtmm-mp4", "qtmm-hls", "qtmm-hls-http", "qtmm-mkv",
-                     "fbx-mp4", "fbx-hls", "fbx-hls-prefix", "fbx-mkv"];
+        // Serie courante : transcodage par le serveur du PC (etape 0 bis).
+        autoQueue = ["pc-server", "qtmm-local", "direct-ac3", "direct-eac3", "direct-dts",
+                     "direct-hevc", "probe-hevc", "tc-hevc", "tc-ac3", "tc-hevc-web", "subs-vtt"];
         autoTimer.interval = 2000;
         autoTimer.start();
     }
