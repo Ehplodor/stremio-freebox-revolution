@@ -6,6 +6,7 @@ import "js/core/addons.js" as Addons
 import "js/core/playback.js" as Playback
 import "js/core/vtt.js" as Vtt
 import "js/core/account.js" as Account
+import "js/core/sorting.js" as Sorting
 
 // Client compatible Stremio pour le Freebox Player.
 // Accueil (rangees de catalogues) -> fiche -> choix du flux -> lecteur.
@@ -13,7 +14,8 @@ Application {
     id: app
 
     property var addons: []
-    property string screen: "home"       // home | details | player | account
+    property string screen: "home"       // home | details | player | account | sort
+    property var sortPrefs: Sorting.normalize(null)
     property string authKey: ""
     property var localRows: ({})         // rangees issues du compte : { continue: [...], library: [...] }
     property var current: null           // { type, id, videoId, meta }
@@ -165,26 +167,50 @@ Application {
         current.streamsRequest = request;
         let answered = 0;
         let items = [];
+        current.rawStreams = [];
+        current.streamsProgress = "";
         client.streams(addons, type, videoId, (g, total) => {
             if (current.streamsRequest !== request)
                 return;
             answered++;
             log("flux " + g.addon + " : " + (g.error ? "echec (" + g.error + ")" : g.items.length));
             if (g.items.length) {
-                const hadNone = items.length === 0;
+                const hadNone = current.rawStreams.length === 0;
                 items = items.concat(g.items.map(s => ({ addon: g.addon, stream: s })));
-                details.streams = items;
+                current.rawStreams = items;
                 if (hadNone)
                     details.focusStreams();
             }
-            details.streamsStatus = items.length + " flux" + (answered < total ? " (" + answered + "/" + total + " addons)" : "")
-                + (answered === total && !items.length ? " - aucun flux trouve" : "");
+            current.streamsProgress = answered < total ? " (" + answered + "/" + total + " addons)" : "";
+            refreshStreams();
         }).then(() => {
             if (current.streamsRequest !== request)
                 return;
             log("flux pour " + videoId + " : " + items.length);
-            autotest.streamsLoaded(items);
+            autotest.streamsLoaded(details.streams);
         }).catch(e => log("flux en echec : " + e));
+    }
+
+    // Liste affichee : flux tries et filtres selon les preferences.
+    function refreshStreams() {
+        const raw = current.rawStreams || [];
+        const r = Sorting.sortStreams(raw, sortPrefs);
+        details.streams = r.visible;
+        details.streamsStatus = r.visible.length + " flux" + (r.hidden ? ", " + r.hidden + " masques" : "")
+            + (current.streamsProgress || "")
+            + (!current.streamsProgress && !raw.length ? " - aucun flux trouve" : "");
+    }
+
+    function openSortSettings() {
+        screen = "sort";
+        sortPage.prefs = sortPrefs;
+        sortPage.forceActiveFocus();
+    }
+
+    function saveSortPrefs(prefs) {
+        sortPrefs = prefs;
+        settings.sortPrefs = JSON.stringify(prefs);
+        log("tri : " + JSON.stringify(prefs));
     }
 
     // ----- Lecture -----
@@ -300,6 +326,10 @@ Application {
     function back() {
         if (screen === "player") {
             stopPlayer();
+        } else if (screen === "sort") {
+            screen = "details";
+            refreshStreams();
+            details.focusStreams();
         } else if (screen === "details" || screen === "account") {
             linkTimer.stop();
             screen = "home";
@@ -317,6 +347,7 @@ Application {
         id: settings
         property string authKey: ""
         property int launches: 0
+        property string sortPrefs: ""   // JSON des preferences de tri
     }
 
     ListModel { id: rowsModel }
@@ -390,6 +421,13 @@ Application {
             }
         }
 
+        SortSettingsPage {
+            id: sortPage
+            anchors.fill: parent
+            visible: app.screen === "sort"
+            onChanged: app.saveSortPrefs(prefs)
+        }
+
         DetailsPage {
             id: details
             anchors.fill: parent
@@ -432,6 +470,9 @@ Application {
             } else if (event.key === Qt.Key_Menu && app.screen === "home") {
                 event.accepted = true;
                 app.openAccount();
+            } else if (event.key === Qt.Key_Menu && app.screen === "details") {
+                event.accepted = true;
+                app.openSortSettings();
             }
         }
     }
@@ -460,6 +501,14 @@ Application {
         function streamsLoaded(items) {
             if (!running || stepTimer.step !== "wait-streams")
                 return;
+            if (Config.AUTOTEST.sort) {
+                app.log("autotest : " + details.streamsStatus + " ; en tete : "
+                        + JSON.stringify(items.slice(0, 5).map(i => i.badges)));
+                stepTimer.step = "sort";
+                stepTimer.interval = 3000;
+                stepTimer.start();
+                return;
+            }
             if (!items.length || Config.AUTOTEST.noPlay) {
                 app.log("autotest : " + items.length + " flux, arret sans lecture");
                 running = false;
@@ -500,6 +549,21 @@ Application {
                 app.log("autotest : accueil " + home.count + " rangees, affiches chargees " + images + ", en echec " + failed);
                 step = "wait-streams";
                 app.openMeta(Config.AUTOTEST.type, Config.AUTOTEST.id);
+            } else if (step === "sort") {
+                // Modifie les preferences comme a la telecommande : ecran de tri, langue anglaise,
+                // taille en premier critere, puis retour a la fiche.
+                const saved = app.sortPrefs;
+                app.openSortSettings();
+                sortPage.apply("languages", 1);
+                sortPage.apply("languages", 1);
+                for (let k = 0; k < 4; k++)
+                    sortPage.apply("order:size", -1);
+                app.back();
+                app.log("autotest : apres modification : " + details.streamsStatus + " ; en tete : "
+                        + JSON.stringify(details.streams.slice(0, 5).map(i => i.badges)));
+                app.saveSortPrefs(saved);       // remet les preferences de Rod
+                app.refreshStreams();
+                autotest.running = false;
             } else if (step === "audio") {
                 const page = playerLoader.item;
                 app.log("autotest : pistes audio " + JSON.stringify(page.audioTracks.map(a => a.label))
@@ -533,6 +597,11 @@ Application {
 
     Component.onCompleted: {
         settings.launches = settings.launches + 1;
+        try {
+            sortPrefs = Sorting.normalize(settings.sortPrefs ? JSON.parse(settings.sortPrefs) : null);
+        } catch (e) {
+            log("preferences de tri illisibles, valeurs par defaut");
+        }
         log("demarrage n" + settings.launches + ", ecran " + width + "x" + height + ", compte " + (settings.authKey ? "lie" : "non lie"));
         loadAddons();
     }

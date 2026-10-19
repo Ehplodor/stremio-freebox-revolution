@@ -103,6 +103,18 @@ réglage global (`transcodeMaxBitRate`). L'appli demande donc `maxWidth=1280` pa
   Par défaut : sous-titres français seulement si la première piste audio n'est pas en français.
 - Premier test réel avec AllDebrid (Harry Potter, par Rod) : lecture et son OK.
 
+## Tri des sources (modifiable et enregistré)
+
+- Informations lues dans le texte des flux (format Torrentio, Comet, StreamFusion) :
+  en cache chez le débrideur (`[AD+]`, `⚡`) ou à télécharger, résolution, HDR/Dolby Vision,
+  codec, langues (drapeaux, MULTI, FRENCH, VFF…), taille (💾), sources (👤).
+- Critères ordonnables : en cache, résolution, langue, lisible sans transcodage (H.264),
+  taille, sources. Filtres : résolution maximale (1080p par défaut), Dolby Vision masqué,
+  fichiers de moins de 300 Mo masqués, « pas en cache » et taille maximale en option.
+- Écran « Tri des sources » (touche Menu sur une fiche), enregistré dans `App.settings`.
+- Sur la box, Harry Potter : 599 flux (Torrentio a répondu cette fois), 426 affichés,
+  173 masqués ; en tête des 1080p en cache, français/multi, H.264.
+
 ## Conséquences pour le plan
 
 - Le risque « runtime ancien » disparaît : on peut écrire le mini-core en JavaScript moderne.

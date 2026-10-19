@@ -30,4 +30,6 @@ const DEV_ADDONS = [
 // Exemple : { type: "movie", id: "tt0241527", noPlay: true }
 // tracks: true change de piste audio puis de sous-titres pendant la lecture.
 // Exemple : { type: "movie", id: "fbxtest-multi", tracks: true, playSeconds: 60 }
+// sort: true modifie le tri comme a la telecommande puis remet les preferences.
+// Exemple : { type: "movie", id: "tt0241527", sort: true }
 const AUTOTEST = null;

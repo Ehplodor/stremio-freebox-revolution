@@ -92,7 +92,7 @@ FocusScope {
         anchors { left: episodeList.right; leftMargin: page.isSeries ? 40 : 0; top: header.bottom; topMargin: 30 }
         color: "#9aa7b4"
         font.pixelSize: 20
-        text: "Flux" + (page.streamsStatus ? " : " + page.streamsStatus : "")
+        text: "Flux" + (page.streamsStatus ? " : " + page.streamsStatus : "") + "   ·   Menu : tri des sources"
     }
 
     ListView {
@@ -108,18 +108,18 @@ FocusScope {
             width: streamList.width
             leftPadding: 10
             Text {
+                width: parent.width - 20
                 color: "white"
                 font.pixelSize: 18
-                text: modelData.addon + " · " + (modelData.stream.name || "")
+                elide: Text.ElideRight
+                text: (modelData.badges || "") + (modelData.badges ? "   " : "") + modelData.addon
             }
             Text {
                 width: parent.width - 20
                 color: "#c8d0d8"
                 font.pixelSize: 15
-                wrapMode: Text.Wrap
-                maximumLineCount: 2
                 elide: Text.ElideRight
-                text: modelData.stream.title || modelData.stream.description || modelData.stream.url || ""
+                text: (modelData.stream.title || modelData.stream.description || modelData.stream.name || "").split("\n")[0]
             }
         }
         Keys.onReturnPressed: if (count) page.streamChosen(page.streams[currentIndex])
