@@ -245,6 +245,21 @@ function embeddedSubtitleUrl(settings, mediaUrl, masterUrl, sub) {
     ]);
 }
 
+// Piste integree en segments HLS : { master, playlist, needsMaster }.
+// En transcodage, le master en cours de lecture a deja cree le convertisseur sur le serveur ;
+// en lecture directe, il faut d'abord demander un master (sans le lire) pour le creer.
+function embeddedSubtitleStream(settings, mediaUrl, masterUrl, sub) {
+    const master = masterUrl || hlsUrl(settings, mediaUrl, false);
+    const parts = master.split("?");
+    const folder = parts[0].replace(/\/master\.m3u8$/, "");
+    const query = (parts[1] || "").replace(/&?fbxAudio=[^&]*/, "");
+    return {
+        master: master,
+        playlist: folder + "/subtitle" + encodeURIComponent(sub.id) + ".m3u8" + (query ? "?" + query : ""),
+        needsMaster: !masterUrl
+    };
+}
+
 // Choix des sous-titres au demarrage : francais si la premiere piste audio n'est pas en francais.
 function defaultSubtitle(options, audio) {
     if (audio.length && isFrench(audio[0].language))

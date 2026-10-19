@@ -9,6 +9,7 @@ import "../js/core/vtt.js" as Vtt
 import "../js/core/account.js" as Account
 import "../js/core/sorting.js" as Sorting
 import "../js/core/resume.js" as Resume
+import "../js/core/subsegments.js" as SubSeg
 
 // Racine de l'appli, chargee depuis l'agent du PC (par le lanceur du Player ou par main.qml).
 // Ecrans : accueil, recherche, reglages (barre du haut), fiche, lecteur, compte, tri.
@@ -38,6 +39,7 @@ Item {
     property var catalogCache: ({})
     property var playToken: null
     property var pendingSubtitles: null
+    property var subStream: null         // sous-titres integres en cours de chargement par segments
     property var current: null           // fiche ouverte : { type, id, videoId, meta, ... }
     property var client: Addons.createClient(Http.fetchJson)
     readonly property var transport: ({ fetchJson: Http.fetchJson, postJson: Http.postJson })
@@ -476,7 +478,7 @@ Item {
         const options = [{ label: "Desactives", kind: "off" }];
         Playback.embeddedSubtitles(p.probe).forEach(s => options.push({
             label: s.label + "  (integre)", kind: "embedded", language: s.language,
-            url: Playback.embeddedSubtitleUrl(cfg, p.mediaUrl, p.transcoded ? p.url : "", s)
+            stream: Playback.embeddedSubtitleStream(cfg, p.mediaUrl, p.transcoded ? p.url : "", s)
         }));
         const external = (stream.subtitles || []).map(s => ({ addon: "source", sub: s }));
         client.subtitles(addons, current.type, current.videoId).then(groups => {
@@ -515,14 +517,81 @@ Item {
             settings.subLang = option.kind === "off" ? "off" : /^(fre|fra|fr)$/.test(lang) ? "fr"
                              : /^(eng|en)$/.test(lang) ? "en" : settings.subLang;
         }
+        subStream = null;
         if (option.kind === "off")
             return;
-        Http.fetchText(option.url, option.kind === "embedded" ? 300000 : 0).then(text => {
+        if (option.kind === "embedded") {
+            startSegmentedSubtitles(page, option, index);
+            return;
+        }
+        log("sous-titres " + option.label + " : chargement");
+        Http.fetchText(option.url, 60000).then(text => {
             if (playerLoader.item !== page || page.subtitleIndex !== index)
                 return;
             page.cues = Vtt.parse(text);
             log("sous-titres " + option.label + " : " + page.cues.length + " lignes");
-        }).catch(e => toast("Sous-titres indisponibles", "warn"));
+            if (!page.cues.length)
+                toast("Ce fichier de sous-titres est vide ou illisible, essayez-en un autre", "warn");
+        }).catch(e => {
+            log("sous-titres " + option.label + " en echec : " + e.message);
+            if (playerLoader.item === page && page.subtitleIndex === index)
+                toast("Sous-titres indisponibles (" + e.message + "), essayez-en un autre", "warn");
+        });
+    }
+
+    // Sous-titres integres : segments de quelques secondes autour de la position de lecture,
+    // comme un lecteur HLS (extraire toute la piste obligerait le PC a lire tout le fichier).
+    function startSegmentedSubtitles(page, option, index) {
+        const s = { page: page, index: index, segments: [], done: {}, busy: 0, failures: 0, shown: false };
+        subStream = s;
+        log("sous-titres " + option.label + " : segments");
+        const ready = option.stream.needsMaster ? Http.fetchText(option.stream.master, 60000) : Promise.resolve();
+        ready.then(() => Http.fetchText(option.stream.playlist, 60000)).then(text => {
+            if (subStream !== s)
+                return;
+            s.segments = SubSeg.parsePlaylist(text, option.stream.playlist);
+            log("sous-titres integres : " + s.segments.length + " segments");
+            if (!s.segments.length)
+                toast("Piste de sous-titres vide", "warn");
+            pumpSubtitles();
+        }).catch(e => {
+            log("sous-titres integres en echec : " + e.message);
+            if (subStream === s)
+                toast("Sous-titres integres indisponibles (" + e.message + ")", "warn");
+        });
+    }
+
+    // Charge les segments utiles (3 a la fois) ; rappele regulierement et apres chaque segment.
+    function pumpSubtitles() {
+        const s = subStream;
+        if (!s || !s.segments.length || playerLoader.item !== s.page || s.page.subtitleIndex !== s.index)
+            return;
+        const position = Math.max(0, s.page.positionMs - s.page.subDelay);
+        SubSeg.needed(s.segments, position, s.done).slice(0, Math.max(0, 3 - s.busy)).forEach(i => {
+            s.done[i] = true;
+            s.busy++;
+            Http.fetchText(s.segments[i].url, 45000).then(text => {
+                s.busy--;
+                if (subStream !== s || playerLoader.item !== s.page)
+                    return;
+                const cues = Vtt.parse(text);
+                if (cues.length) {
+                    s.page.cues = SubSeg.merge(s.page.cues, cues);
+                    if (!s.shown) {
+                        s.shown = true;
+                        log("sous-titres integres : premiers sous-titres recus");
+                    }
+                }
+                pumpSubtitles();
+            }).catch(e => {
+                s.busy--;
+                delete s.done[i];                  // nouvel essai au prochain passage
+                s.failures++;
+                log("segment de sous-titres en echec : " + e.message);
+                if (s.failures === 6 && subStream === s)
+                    toast("Les sous-titres integres arrivent mal, le PC est peut-etre occupe", "warn");
+            });
+        });
     }
 
     // Position de reprise : enregistree regulierement et a l'arret.
@@ -558,6 +627,7 @@ Item {
     }
 
     function stopPlayer() {
+        subStream = null;
         savePosition();
         if (playerLoader.item)
             playerLoader.item.stop();
@@ -756,6 +826,14 @@ Item {
         repeat: true
         running: app.screen === "player"
         onTriggered: savePosition()
+    }
+
+    Timer {
+        // Sous-titres integres : suit la position (lecture, sauts avant/arriere).
+        interval: 2000
+        repeat: true
+        running: app.subStream !== null && app.screen === "player"
+        onTriggered: app.pumpSubtitles()
     }
 
     Timer {

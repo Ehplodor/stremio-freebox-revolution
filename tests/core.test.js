@@ -230,3 +230,13 @@ test("transcodage force apres un echec de lecture directe", async () => {
     assert.ok(forced.transcoded);
     assert.match(forced.url, /forceTranscoding=1/);
 });
+
+test("sous-titres integres en segments : URLs de la playlist", () => {
+    const master = "http://pc:11480/hlsv2/fbx1/master.m3u8?mediaURL=x&maxWidth=1280&fbxAudio=1";
+    const s = playback.embeddedSubtitleStream(SETTINGS, "x", master, { id: 2, codec: "subrip" });
+    assert.equal(s.playlist, "http://pc:11480/hlsv2/fbx1/subtitle2.m3u8?mediaURL=x&maxWidth=1280");
+    assert.equal(s.needsMaster, false);
+    const d = playback.embeddedSubtitleStream(SETTINGS, "http://cdn/f.mkv", "", { id: 0, codec: "ass" });
+    assert.ok(d.needsMaster);
+    assert.match(d.playlist, /^http:\/\/pc:11480\/hlsv2\/fbx[a-z0-9]+\/subtitle0\.m3u8\?mediaURL=http%3A%2F%2Fcdn%2Ff\.mkv/);
+});
