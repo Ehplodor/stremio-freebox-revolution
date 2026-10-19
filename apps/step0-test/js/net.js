@@ -27,3 +27,22 @@ function summarize(text, picker) {
         return "JSON invalide (" + text.length + " octets) : " + e;
     }
 }
+
+// Mesure du debit : telecharge url en binaire. callback(err, octets, ms).
+function measure(url, callback) {
+    var start = new Date().getTime();
+    var xhr = new XMLHttpRequest();
+    xhr.responseType = "arraybuffer";
+    xhr.onreadystatechange = function () {
+        if (xhr.readyState !== XMLHttpRequest.DONE)
+            return;
+        var ms = new Date().getTime() - start;
+        if (xhr.status !== 200 && xhr.status !== 206) {
+            callback("HTTP " + xhr.status, 0, ms);
+            return;
+        }
+        callback(null, xhr.response ? xhr.response.byteLength : 0, ms);
+    };
+    xhr.open("GET", url);
+    xhr.send();
+}

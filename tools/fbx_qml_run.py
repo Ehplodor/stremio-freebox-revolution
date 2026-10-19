@@ -26,6 +26,7 @@ import struct
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 
 MDNS_ADDR = ("224.0.0.251", 5353)
@@ -61,6 +62,41 @@ def mdns_find(service, timeout=3.0):
 
 class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
     """Serveur de fichiers sans cache, avec prise en charge de Range (lecteurs video, ffmpeg)."""
+
+    STREMIO = "http://127.0.0.1:11470"
+
+    def do_GET(self):
+        if self.path.startswith("/stremio/"):
+            return self.proxy_stremio()
+        return super().do_GET()
+
+    def proxy_stremio(self):
+        """Relais vers le serveur de streaming local. Retire la piste de sous-titres
+        des master.m3u8 : le lecteur HLS du Player se bloque dessus (etape 0 bis)."""
+        url = self.STREMIO + self.path[len("/stremio"):]
+        headers = {}
+        if self.headers.get("Range"):
+            headers["Range"] = self.headers["Range"]
+        try:
+            rsp = urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=120)
+        except urllib.error.HTTPError as e:
+            rsp = e
+        body = rsp.read()
+        if "/master.m3u8" in self.path.split("?")[0]:
+            lines = body.decode("utf-8").splitlines()
+            lines = [l.replace(',SUBTITLES="subtitles"', "") for l in lines
+                     if not l.startswith("#EXT-X-MEDIA:TYPE=SUBTITLES")]
+            body = ("\n".join(lines) + "\n").encode("utf-8")
+        self.send_response(rsp.status if hasattr(rsp, "status") else rsp.code)
+        for k in ("Content-Type", "Content-Range"):
+            if rsp.headers.get(k):
+                self.send_header(k, rsp.headers[k])
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def send_head(self):
         self._range = None
@@ -120,7 +156,9 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
 
 class ThreadedHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
-    allow_reuse_address = True
+    # Pas de SO_REUSEADDR : sous Windows il laisse un second serveur prendre le meme port
+    # et lui voler les requetes du Player.
+    allow_reuse_address = False
 
 
 def local_addr_to(host, port=80):

@@ -21,11 +21,11 @@ var HEVC_1080_WEB = "https://repo.jellyfin.org/test-videos/SDR/HEVC%208bit/Test%
 
 // URL HLS transcodee en H.264/AAC stereo par le serveur de streaming (protocole de
 // stremio-video/withStreamingServer, MIT, Smart Code OOD).
-function hlsv2(mediaUrl, force) {
+function hlsv2(mediaUrl, force, server) {
     var id = "fbx" + Math.floor(Math.random() * 1e9);
     var q = "mediaURL=" + encodeURIComponent(mediaUrl)
             + "&videoCodecs=h264&audioCodecs=aac&audioCodecs=mp3&maxAudioChannels=2";
     if (force)
         q += "&forceTranscoding=1";
-    return PC_SERVER + "/hlsv2/" + id + "/master.m3u8?" + q;
+    return (server || PC_SERVER) + "/hlsv2/" + id + "/master.m3u8?" + q;
 }

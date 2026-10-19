@@ -47,6 +47,11 @@ function run(parent) {
 
     var modules = ["fbx.application 1.0", "fbx.media 1.0", "fbx.ui.control 1.0",
                    "fbx.ui.menu 1.0", "fbx.web 1.0", "fbx.async 1.0", "fbx.data 1.0",
+                   "fbx.ui.base 1.0", "fbx.ui.controller 1.0", "fbx.ui.layout 1.0", "fbx.ui.page 1.0",
+                   "fbx.ui.dialog 1.0", "fbx.ui.settings 1.0", "fbx.crypto 1.0",
+                   "fbx.os.mms 1.0", "fbx.wl 1.0", "fbx.cdm 1.0", "fbx.inapp 1.0",
+                   "QtQuick.Window 2.2", "QtQuick.Layouts 1.1", "QtGraphicalEffects 1.0",
+                   "QtQuick.LocalStorage 2.0", "Qt.labs.settings 1.0", "QtWebSockets 1.0",
                    "QtQuick.Controls 1.0", "QtQuick.Controls 2.0", "QtQuick.XmlListModel 2.0"];
     var ok = [], ko = [];
     for (var i = 0; i < modules.length; i++) {

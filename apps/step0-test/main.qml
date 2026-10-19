@@ -90,6 +90,18 @@ Application {
         log("Lecture arretee");
     }
 
+    function runSpeed(url) {
+        log("Debit : GET " + url);
+        Net.measure(url, function (err, bytes, ms) {
+            if (err) {
+                log("  ECHEC " + err);
+                return;
+            }
+            log("  " + Math.round(bytes / 1024) + " ko en " + ms + " ms = "
+                + (bytes * 8 / 1000 / ms).toFixed(1) + " Mbit/s");
+        });
+    }
+
     function runTest(kind) {
         switch (kind) {
         case "probe": runProbe(); break;
@@ -112,9 +124,13 @@ Application {
         case "direct-hevc": play("PlayerQtMultimedia.qml", media("hevc_ac3_srt.mkv")); break;
         case "probe-hevc": runXhr(Config.PC_SERVER + "/hlsv2/probe?mediaURL=" + encodeURIComponent(media("hevc_ac3_srt.mkv")), pickProbe); break;
         case "tc-hevc": play("PlayerQtMultimedia.qml", Config.hlsv2(media("hevc_ac3_srt.mkv"), false)); break;
+        case "tc-hevc-nosub": play("PlayerQtMultimedia.qml", Config.hlsv2(media("hevc2.mkv"), false)); break;
+        case "tc-hevc-proxy": play("PlayerQtMultimedia.qml", Config.hlsv2(media("hevc_ac3_srt.mkv"), false, Qt.resolvedUrl("stremio").toString())); break;
         case "tc-ac3": play("PlayerQtMultimedia.qml", Config.hlsv2(media("h264_ac3.mkv"), true)); break;
         case "tc-hevc-web": play("PlayerQtMultimedia.qml", Config.hlsv2(Config.HEVC_1080_WEB, false)); break;
         case "subs-vtt": runXhr(Config.PC_SERVER + "/subtitles.vtt?from=" + encodeURIComponent(media("test.srt")), pickText); break;
+        case "speed-pc": runSpeed(media("test.mp4")); break;
+        case "speed-web": runSpeed(Config.MP4_H264); break;
         case "urlopen-mp4":
             log("App.urlOpen " + Config.MP4_H264);
             App.urlOpen(Config.MP4_H264, "video/mp4");
@@ -145,9 +161,13 @@ Application {
         ListElement { kind: "direct-hevc"; label: "Direct : HEVC + AC3 (MKV)" }
         ListElement { kind: "probe-hevc"; label: "Serveur PC : probe du MKV HEVC" }
         ListElement { kind: "tc-hevc"; label: "Transcodage PC : HEVC vers HLS H.264/AAC" }
+        ListElement { kind: "tc-hevc-nosub"; label: "Transcodage PC : HEVC sans sous-titres" }
+        ListElement { kind: "tc-hevc-proxy"; label: "Transcodage PC via relais sans piste sous-titres" }
         ListElement { kind: "tc-ac3"; label: "Transcodage PC : AC3 force vers AAC" }
         ListElement { kind: "tc-hevc-web"; label: "Transcodage PC : HEVC 1080p internet" }
         ListElement { kind: "subs-vtt"; label: "Serveur PC : SRT vers VTT" }
+        ListElement { kind: "speed-pc"; label: "Debit PC vers box (MP4 20 Mo)" }
+        ListElement { kind: "speed-web"; label: "Debit internet vers box (MP4 1 Mo)" }
         ListElement { kind: "urlopen-mp4"; label: "Lecteur systeme : App.urlOpen MP4" }
     }
 
@@ -175,7 +195,7 @@ Application {
         log("== Auto : " + kind);
         runTest(kind);
         var isVideo = /^(qtmm|fbx|direct|tc-)/.test(kind);
-        autoTimer.interval = isVideo ? 30000 : 6000;
+        autoTimer.interval = isVideo ? 30000 : 15000;
         autoTimer.start();
     }
 
@@ -277,8 +297,8 @@ Application {
         log("Serveur PC configure : " + Config.PC_SERVER);
         runProbe();
         // Serie courante : transcodage par le serveur du PC (etape 0 bis).
-        autoQueue = ["pc-server", "qtmm-local", "direct-ac3", "direct-eac3", "direct-dts",
-                     "direct-hevc", "probe-hevc", "tc-hevc", "tc-ac3", "tc-hevc-web", "subs-vtt"];
+        autoQueue = ["qtmm-local", "direct-ac3", "direct-eac3", "direct-dts", "direct-hevc",
+                     "tc-hevc-proxy", "tc-ac3"];
         autoTimer.interval = 2000;
         autoTimer.start();
     }
