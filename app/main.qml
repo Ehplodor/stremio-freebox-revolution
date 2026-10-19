@@ -68,7 +68,7 @@ Application {
                                                  type: r.type, cid: r.id, name: r.name }));
             if (screen === "home")
                 home.forceActiveFocus();
-            if (Config.AUTOTEST && Config.AUTOTEST.id && !autotest.done)
+            if (Config.AUTOTEST && (Config.AUTOTEST.id || Config.AUTOTEST.linkOnly) && !autotest.done)
                 autotest.start();
         }).catch(e => log("chargement des addons en echec : " + e));
     }
@@ -377,8 +377,14 @@ Application {
         property bool done: false
 
         function start() {
-            running = true;
             done = true;
+            if (Config.AUTOTEST.linkOnly) {
+                // Ouvre seulement l'ecran Compte (liaison a distance : le code part dans la console).
+                if (!app.authKey)
+                    app.openAccount();
+                return;
+            }
+            running = true;
             stepTimer.interval = 8000;   // laisse l'accueil charger ses images
             stepTimer.step = Config.AUTOTEST.account && !app.authKey ? "account" : "open";
             stepTimer.start();

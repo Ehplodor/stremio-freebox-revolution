@@ -25,4 +25,5 @@ const DEV_ADDONS = [
 // Scenario automatique pour tester sans telecommande : vide pour desactiver.
 // Ouvre la fiche indiquee, lance son premier flux, puis revient a l'accueil.
 // account: true ouvre d'abord l'ecran Compte quelques secondes (code de liaison).
-const AUTOTEST = { type: "movie", id: "fbxtest-hevc-srt", playSeconds: 40, account: true };
+// linkOnly: true ouvre seulement l'ecran Compte (le code s'affiche aussi dans la console du PC).
+const AUTOTEST = { linkOnly: true };
