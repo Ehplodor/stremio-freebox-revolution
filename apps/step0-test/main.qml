@@ -115,88 +115,122 @@ Application {
 
     ListModel { id: logModel }
 
-    Rectangle {
+    // Mode automatique : enchaine les tests pour qu'on puisse tout suivre depuis la console du PC.
+    property var autoQueue: []
+
+    Timer {
+        id: autoTimer
+        repeat: false
+        onTriggered: app.autoNext()
+    }
+
+    function autoNext() {
+        if (playing)
+            stopPlayer();
+        var q = autoQueue;
+        if (!q.length) {
+            log("== Fin des tests automatiques");
+            return;
+        }
+        var kind = q.shift();
+        autoQueue = q;
+        log("== Auto : " + kind);
+        runTest(kind);
+        var isVideo = kind.indexOf("qtmm") === 0 || kind.indexOf("fbx") === 0;
+        autoTimer.interval = isVideo ? 25000 : 6000;
+        autoTimer.start();
+    }
+
+    // Application est une fenetre : Keys ne s'y attache pas, d'ou ce FocusScope.
+    FocusScope {
+        id: ui
         anchors.fill: parent
-        color: "#101418"
-    }
-
-    Text {
-        id: title
-        anchors { left: parent.left; top: parent.top; margins: 30 }
-        color: "white"
-        font.pixelSize: 30
-        text: "Stremio Freebox, etape 0 : tests de faisabilite"
-    }
-
-    ListView {
-        id: tests
-        anchors { left: parent.left; top: title.bottom; bottom: parent.bottom; margins: 30 }
-        width: parent.width * 0.38
         focus: true
-        clip: true
-        model: testModel
-        highlightMoveDuration: 0
-        highlight: Rectangle { color: "#2a6fdb"; radius: 4 }
 
-        // Pas de leftPadding (Qt 5.6+) : le runtime de la box peut etre plus ancien.
-        delegate: Item {
-            width: tests.width
-            height: 38
-            Text {
-                anchors { fill: parent; leftMargin: 10 }
-                verticalAlignment: Text.AlignVCenter
-                color: "white"
-                font.pixelSize: 22
-                elide: Text.ElideRight
-                text: (index + 1) + ". " + label
+        Rectangle {
+            anchors.fill: parent
+            color: "#101418"
+        }
+
+        Text {
+            id: title
+            anchors { left: parent.left; top: parent.top; margins: 30 }
+            color: "white"
+            font.pixelSize: 30
+            text: "Stremio Freebox, etape 0 : tests de faisabilite"
+        }
+
+        ListView {
+            id: tests
+            anchors { left: parent.left; top: title.bottom; bottom: parent.bottom; margins: 30 }
+            width: parent.width * 0.38
+            focus: true
+            clip: true
+            model: testModel
+            highlightMoveDuration: 0
+            highlight: Rectangle { color: "#2a6fdb"; radius: 4 }
+
+            // Pas de leftPadding (Qt 5.6+) : le runtime de la box peut etre plus ancien.
+            delegate: Item {
+                width: tests.width
+                height: 38
+                Text {
+                    anchors { fill: parent; leftMargin: 10 }
+                    verticalAlignment: Text.AlignVCenter
+                    color: "white"
+                    font.pixelSize: 22
+                    elide: Text.ElideRight
+                    text: (index + 1) + ". " + label
+                }
+            }
+
+            Keys.onReturnPressed: app.runTest(testModel.get(currentIndex).kind)
+            Keys.onEnterPressed: app.runTest(testModel.get(currentIndex).kind)
+        }
+
+        ListView {
+            id: logView
+            anchors { left: tests.right; right: parent.right; top: title.bottom; bottom: parent.bottom; margins: 30 }
+            clip: true
+            model: logModel
+            delegate: Text {
+                width: logView.width
+                wrapMode: Text.Wrap
+                color: "#c8d0d8"
+                font.pixelSize: 18
+                text: line
             }
         }
 
-        Keys.onReturnPressed: app.runTest(testModel.get(currentIndex).kind)
-        Keys.onEnterPressed: app.runTest(testModel.get(currentIndex).kind)
-    }
+        Loader {
+            id: playerLoader
+            anchors.fill: parent
+            visible: app.playing
+            focus: app.playing
 
-    ListView {
-        id: logView
-        anchors { left: tests.right; right: parent.right; top: title.bottom; bottom: parent.bottom; margins: 30 }
-        clip: true
-        model: logModel
-        delegate: Text {
-            width: logView.width
-            wrapMode: Text.Wrap
-            color: "#c8d0d8"
-            font.pixelSize: 18
-            text: line
+            onStatusChanged: {
+                if (status === Loader.Error)
+                    app.log("Impossible de charger le lecteur (module absent ?)");
+            }
+            onLoaded: item.logMessage.connect(app.log)
+
+            Keys.onPressed: {
+                if (event.key === Qt.Key_Back || event.key === Qt.Key_Escape || event.key === Qt.Key_Backspace) {
+                    event.accepted = true;
+                    app.stopPlayer();
+                }
+            }
         }
-    }
-
-    Loader {
-        id: playerLoader
-        anchors.fill: parent
-        visible: app.playing
-        focus: app.playing
-
-        onStatusChanged: {
-            if (status === Loader.Error)
-                app.log("Impossible de charger le lecteur (module absent ?)");
-        }
-        onLoaded: item.logMessage.connect(app.log)
 
         Keys.onPressed: {
-            if (event.key === Qt.Key_Back || event.key === Qt.Key_Escape || event.key === Qt.Key_Backspace) {
+            if (event.key === Qt.Key_Back || event.key === Qt.Key_Escape) {
+                autoTimer.stop();
                 event.accepted = true;
-                app.stopPlayer();
+                if (app.playing)
+                    app.stopPlayer();
+                else
+                    Qt.quit();
             }
-        }
-    }
-
-    Keys.onPressed: {
-        if (event.key === Qt.Key_Back || event.key === Qt.Key_Escape) {
-            event.accepted = true;
-            if (app.playing)
-                app.stopPlayer();
-            else
-                Qt.quit();
         }
     }
 
@@ -204,5 +238,10 @@ Application {
         log("Demarrage. Haut/Bas pour choisir, OK pour lancer, Retour pour quitter.");
         log("Serveur PC configure : " + Config.PC_SERVER);
         runProbe();
+        autoQueue = ["cinemeta", "cinemeta-http", "catalog", "pc-server",
+                     "qtmm-mp4", "qtmm-hls", "qtmm-hls-http", "qtmm-mkv",
+                     "fbx-mp4", "fbx-hls", "fbx-hls-prefix", "fbx-mkv"];
+        autoTimer.interval = 2000;
+        autoTimer.start();
     }
 }

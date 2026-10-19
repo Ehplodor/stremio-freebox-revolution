@@ -1,13 +1,16 @@
 // Detection du runtime QML/JavaScript de la box. ES5 uniquement :
 // ce fichier doit se charger meme sur un vieux moteur V4.
 
-// Renvoie true si le bloc d'imports QML se charge.
+var lastError = "";
+
+// Renvoie true si le bloc d'imports QML se charge ; sinon l'erreur est dans lastError.
 function canImport(parent, imports) {
     try {
         var o = Qt.createQmlObject(imports + "\nItem {}", parent, "probe");
         o.destroy();
         return true;
     } catch (e) {
+        lastError = e.qmlErrors && e.qmlErrors.length ? e.qmlErrors[0].message : String(e);
         return false;
     }
 }
@@ -50,7 +53,7 @@ function run(parent) {
         if (canImport(parent, "import QtQuick 2.0\nimport " + modules[i]))
             ok.push(modules[i]);
         else
-            ko.push(modules[i]);
+            ko.push(modules[i] + " (" + lastError + ")");
     }
     lines.push("Modules presents : " + ok.join(", "));
     lines.push("Modules absents : " + (ko.length ? ko.join(", ") : "aucun"));

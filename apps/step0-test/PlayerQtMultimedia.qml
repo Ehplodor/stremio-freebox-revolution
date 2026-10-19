@@ -38,6 +38,16 @@ Rectangle {
         onError: root.logMessage("QtMM erreur " + error + " : " + errorString)
     }
 
+    // Trace reguliere pour juger la lecture depuis la console du PC.
+    Timer {
+        interval: 5000
+        repeat: true
+        running: player.playbackState === MediaPlayer.PlayingState
+        onTriggered: root.logMessage("QtMM position " + Math.round(player.position / 1000) + " s, "
+                                     + root.statusName(player.status) + ", buffer " + Math.round(player.bufferProgress * 100) + " %"
+                                     + (player.metaData.resolution ? ", " + player.metaData.resolution.width + "x" + player.metaData.resolution.height : ""))
+    }
+
     VideoOutput {
         anchors.fill: parent
         source: player
