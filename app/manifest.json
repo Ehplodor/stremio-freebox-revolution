@@ -1,5 +1,5 @@
 {
-    "name": "Client Stremio (dev)",
+    "name": "Revo Stream (dev)",
     "identifier": "org.ehplodor.stremiofbx",
     "description": "Client compatible avec les addons Stremio pour le Freebox Player",
     "capabilities": {
@@ -10,5 +10,6 @@
             "file": "main.qml",
             "default": true
         }
-    }
+    },
+    "version": "2.0.0"
 }

@@ -1,0 +1,11 @@
+AppRoot 1.0 AppRoot.qml
+HomePage 1.0 HomePage.qml
+PosterRow 1.0 PosterRow.qml
+DetailsPage 1.0 DetailsPage.qml
+PlayerPage 1.0 PlayerPage.qml
+SearchPage 1.0 SearchPage.qml
+SettingsPage 1.0 SettingsPage.qml
+AccountPage 1.0 AccountPage.qml
+SortSettingsPage 1.0 SortSettingsPage.qml
+TopBar 1.0 TopBar.qml
+Toast 1.0 Toast.qml

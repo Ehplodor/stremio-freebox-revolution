@@ -1,4 +1,5 @@
 import QtQuick 2.15
+import "../js/theme.js" as T
 
 // Compte Stremio : affiche le code de liaison et son QR code, ou le compte lie.
 // OK : creer un nouveau code (non lie) ou se deconnecter (lie). Retour : accueil.
@@ -15,7 +16,7 @@ FocusScope {
 
     Rectangle {
         anchors.fill: parent
-        color: "#0e1318"
+        color: T.bg
     }
 
     Column {
@@ -25,7 +26,7 @@ FocusScope {
 
         Text {
             anchors.horizontalCenter: parent.horizontalCenter
-            color: "white"
+            color: T.text
             font.pixelSize: 38
             font.bold: true
             text: "Compte Stremio"
@@ -35,7 +36,7 @@ FocusScope {
         Text {
             visible: page.email !== ""
             anchors.horizontalCenter: parent.horizontalCenter
-            color: "#d8dee4"
+            color: T.text
             font.pixelSize: 26
             text: "Connecte : " + page.email + "\n\nOK pour se deconnecter de ce Player."
             horizontalAlignment: Text.AlignHCenter
@@ -50,6 +51,7 @@ FocusScope {
             Rectangle {
                 width: 260
                 height: 260
+                radius: T.radius
                 color: "white"
                 Image {
                     anchors { fill: parent; margins: 10 }
@@ -63,22 +65,22 @@ FocusScope {
                 spacing: 16
                 anchors.verticalCenter: parent.verticalCenter
                 Text {
-                    color: "#d8dee4"
+                    color: T.text
                     font.pixelSize: 22
                     text: "Sur ton telephone ou ton PC, connecte a Stremio,\nscanne le QR code ou ouvre :"
                 }
                 Text {
-                    color: "#7fb2ff"
+                    color: T.accent
                     font.pixelSize: 26
                     text: page.link || "..."
                 }
                 Text {
-                    color: "#d8dee4"
+                    color: T.text
                     font.pixelSize: 22
                     text: "Code :"
                 }
                 Text {
-                    color: "white"
+                    color: T.text
                     font.pixelSize: 64
                     font.bold: true
                     font.letterSpacing: 12
@@ -89,7 +91,7 @@ FocusScope {
 
         Text {
             anchors.horizontalCenter: parent.horizontalCenter
-            color: "#9aa7b4"
+            color: T.textMuted
             font.pixelSize: 20
             text: page.status
         }

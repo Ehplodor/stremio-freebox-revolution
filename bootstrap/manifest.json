@@ -1,0 +1,16 @@
+{
+    "name": "Revo Stream",
+    "identifier": "org.ehplodor.revostream",
+    "description": "Films et series avec vos addons Stremio, via votre PC",
+    "version": "2.0.0",
+    "capabilities": {
+        "net_wan": "required"
+    },
+    "icon": "icon.png",
+    "entryPoints": {
+        "main": {
+            "file": "main.qml",
+            "default": true
+        }
+    }
+}

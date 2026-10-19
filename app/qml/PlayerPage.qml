@@ -1,6 +1,7 @@
 import QtQuick 2.15
 import QtMultimedia 5.15
 import "../js/core/vtt.js" as Vtt
+import "../js/theme.js" as T
 
 // Lecteur plein ecran : QtMultimedia (moteur fbxmms du Player) + calque de sous-titres VTT.
 // Haut ou Menu : choix de la piste audio et des sous-titres.
@@ -17,6 +18,13 @@ FocusScope {
     property var subtitleTracks: []      // [{ label }] ; le premier est « Desactives »
     property int subtitleIndex: 0
     property int resumeAt: -1            // position (ms) a retrouver apres un rechargement
+    property int startAt: 0              // reprise de lecture : position de depart (ms)
+    property string subtitleLine: ""     // episode, source... sous le titre
+    property string nextTitle: ""        // episode suivant ("" : aucun)
+    property bool autoNext: true         // enchainer l'episode suivant
+    signal nextRequested()
+    readonly property int positionMs: player.position
+    readonly property int durationMs: player.duration
     signal finished()
     signal failed(string reason)
     property bool failedOnce: false      // erreur + media invalide arrivent souvent ensemble
@@ -110,8 +118,12 @@ FocusScope {
         Component.onCompleted: if ("notifyInterval" in player) player.notifyInterval = 200
         onStatusChanged: {
             page.logMessage("lecteur : " + page.statusName(status));
-            if (status === MediaPlayer.EndOfMedia)
-                page.finished();
+            if (status === MediaPlayer.EndOfMedia) {
+                if (page.nextTitle && page.autoNext)
+                    page.nextRequested();
+                else
+                    page.finished();
+            }
             else if (status === MediaPlayer.InvalidMedia)
                 page.fail("media invalide");
             page.tryResume();
@@ -141,30 +153,174 @@ FocusScope {
         text: page.cues.length ? Vtt.textAt(page.cues, player.position) : ""
     }
 
-    Rectangle {
+    // ----- Affichage par-dessus la video -----
+    Item {
         id: bar
-        visible: page.osd || menu.visible
-        anchors { left: parent.left; right: parent.right; top: parent.top }
-        height: 90
-        color: "#c0000000"
+        anchors.fill: parent
+        visible: opacity > 0
+        opacity: page.osd || menu.visible || player.playbackState === MediaPlayer.PausedState ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: 250 } }
 
-        Text {
-            x: 40
-            y: 14
-            color: "white"
-            font.pixelSize: 24
-            elide: Text.ElideRight
-            width: parent.width - 80
-            text: page.title
+        Rectangle {
+            anchors { left: parent.left; right: parent.right; top: parent.top }
+            height: 120
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0.75) }
+                GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0) }
+            }
         }
         Text {
-            x: 40
-            y: 52
-            color: "#c8d0d8"
-            font.pixelSize: 18
-            text: page.fmt(player.position) + " / " + page.fmt(player.duration) + "   " + page.statusName(player.status)
-                  + (player.playbackState === MediaPlayer.PausedState ? "   pause" : "")
-                  + "   ·   Haut : audio et sous-titres"
+            id: clock
+            anchors { right: parent.right; rightMargin: T.margin; top: parent.top; topMargin: 28 }
+            color: T.text
+            font.pixelSize: T.fontBody
+            text: Qt.formatTime(new Date(), "hh:mm")
+            Timer { interval: 20000; running: bar.visible; repeat: true; onTriggered: clock.text = Qt.formatTime(new Date(), "hh:mm") }
+        }
+
+        Rectangle {
+            anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+            height: 210
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0) }
+                GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.88) }
+            }
+        }
+        Column {
+            anchors { left: parent.left; right: parent.right; bottom: parent.bottom; leftMargin: T.margin; rightMargin: T.margin; bottomMargin: 36 }
+            spacing: 12
+            Text {
+                width: parent.width
+                text: page.title
+                color: T.text
+                font.pixelSize: T.fontHeading
+                font.bold: true
+                elide: Text.ElideRight
+            }
+            Text {
+                visible: page.subtitleLine !== ""
+                width: parent.width
+                text: page.subtitleLine
+                color: T.textMuted
+                font.pixelSize: T.fontSmall
+                elide: Text.ElideRight
+            }
+            // Barre de progression
+            Item {
+                width: parent.width
+                height: 22
+                Rectangle {
+                    id: track
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width
+                    height: 6
+                    radius: 3
+                    color: Qt.rgba(1, 1, 1, 0.22)
+                    Rectangle {
+                        height: parent.height
+                        radius: 3
+                        width: player.duration > 0 ? parent.width * Math.min(1, player.position / player.duration) : 0
+                        color: T.accent
+                    }
+                }
+                Rectangle {
+                    visible: player.duration > 0
+                    x: (player.duration > 0 ? track.width * Math.min(1, player.position / player.duration) : 0) - width / 2
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 16
+                    height: 16
+                    radius: 8
+                    color: T.text
+                }
+            }
+            Item {
+                width: parent.width
+                height: 24
+                Text {
+                    text: page.fmt(player.position)
+                    color: T.text
+                    font.pixelSize: T.fontSmall
+                }
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    color: T.textMuted
+                    font.pixelSize: T.fontSmall
+                    text: player.playbackState === MediaPlayer.PausedState ? "❚❚  Pause  ·  OK pour reprendre"
+                          : player.status === MediaPlayer.Stalled || player.status === MediaPlayer.Loading ? "Chargement…"
+                          : "◀ -10 s   ·   OK pause   ·   +30 s ▶   ·   ▲ Audio et sous-titres"
+                }
+                Text {
+                    anchors.right: parent.right
+                    text: player.duration > 0 ? "-" + page.fmt(player.duration - player.position) : "--:--"
+                    color: T.text
+                    font.pixelSize: T.fontSmall
+                }
+            }
+        }
+    }
+
+    // Chargement : indicateur au centre
+    Rectangle {
+        anchors.centerIn: parent
+        width: 72
+        height: 72
+        radius: 36
+        color: Qt.rgba(0, 0, 0, 0.55)
+        visible: player.status === MediaPlayer.Loading || player.status === MediaPlayer.Stalled
+                 || (player.status === MediaPlayer.Buffering && player.position === 0)
+        Rectangle {
+            anchors.centerIn: parent
+            width: 40
+            height: 40
+            radius: 20
+            color: "transparent"
+            border.width: 4
+            border.color: T.accent
+            Rectangle {
+                width: 12
+                height: 12
+                radius: 6
+                color: T.text
+                x: parent.width / 2 - 6
+                y: -4
+            }
+            RotationAnimation on rotation { from: 0; to: 360; duration: 900; loops: Animation.Infinite; running: parent.visible }
+        }
+    }
+
+    // Episode suivant : carte avec compte a rebours sur les 20 dernieres secondes
+    Rectangle {
+        id: nextCard
+        readonly property int remaining: player.duration > 0 ? Math.ceil((player.duration - player.position) / 1000) : 999
+        visible: page.nextTitle !== "" && page.autoNext && remaining <= 20 && player.duration > 60000
+        anchors { right: parent.right; bottom: parent.bottom; rightMargin: T.margin; bottomMargin: 230 }
+        width: 380
+        height: 104
+        radius: T.radius
+        color: Qt.rgba(0.1, 0.13, 0.19, 0.95)
+        border.color: T.accent
+        border.width: 2
+        Column {
+            anchors { fill: parent; margins: 16 }
+            spacing: 6
+            Text {
+                text: "Episode suivant dans " + Math.max(0, nextCard.remaining) + " s"
+                color: T.textMuted
+                font.pixelSize: T.fontSmall
+            }
+            Text {
+                width: parent.width
+                text: page.nextTitle
+                color: T.text
+                font.pixelSize: T.fontBody
+                font.bold: true
+                elide: Text.ElideRight
+            }
+            Text {
+                text: "▶ OK maintenant   ·   Retour : annuler"
+                color: T.accent
+                font.pixelSize: T.fontTiny + 1
+            }
         }
     }
 
@@ -173,10 +329,11 @@ FocusScope {
     Rectangle {
         id: menu
         visible: false
-        anchors { right: parent.right; top: bar.bottom; bottom: parent.bottom; margins: 30 }
-        width: 760
-        color: "#e0101418"
-        radius: 6
+        anchors { right: parent.right; top: parent.top; bottom: parent.bottom; topMargin: 40; bottomMargin: 40; rightMargin: T.margin }
+        width: 780
+        color: Qt.rgba(0.07, 0.09, 0.13, 0.96)
+        radius: T.radius
+        border.color: T.line
 
         function open() {
             visible = true;
@@ -205,7 +362,7 @@ FocusScope {
             clip: true
             model: page.audioTracks
             highlightMoveDuration: 0
-            highlight: Rectangle { color: "#2a6fdb"; radius: 4; visible: audioList.activeFocus }
+            highlight: Rectangle { color: T.surfaceHigh; radius: T.radiusSmall; border.color: T.focus; border.width: 2; visible: audioList.activeFocus }
             delegate: Text {
                 width: audioList.width
                 height: 40
@@ -214,7 +371,7 @@ FocusScope {
                 color: "white"
                 font.pixelSize: 18
                 elide: Text.ElideRight
-                text: (index === page.audioIndex ? "● " : "   ") + modelData.label
+                text: (index === page.audioIndex ? "✓  " : "     ") + modelData.label
             }
             Keys.onRightPressed: subList.forceActiveFocus()
             Keys.onReturnPressed: {
@@ -239,7 +396,7 @@ FocusScope {
             clip: true
             model: page.subtitleTracks
             highlightMoveDuration: 0
-            highlight: Rectangle { color: "#2a6fdb"; radius: 4; visible: subList.activeFocus }
+            highlight: Rectangle { color: T.surfaceHigh; radius: T.radiusSmall; border.color: T.focus; border.width: 2; visible: subList.activeFocus }
             delegate: Text {
                 width: subList.width
                 height: 40
@@ -248,7 +405,7 @@ FocusScope {
                 color: "white"
                 font.pixelSize: 18
                 elide: Text.ElideRight
-                text: (index === page.subtitleIndex ? "● " : "   ") + modelData.label
+                text: (index === page.subtitleIndex ? "✓  " : "     ") + modelData.label
             }
             Keys.onLeftPressed: if (page.audioTracks.length) audioList.forceActiveFocus()
             Keys.onReturnPressed: {
@@ -292,6 +449,22 @@ FocusScope {
         switch (event.key) {
         case Qt.Key_Return:
         case Qt.Key_Enter:
+            if (nextCard.visible) {
+                page.nextRequested();
+                break;
+            }
+            if (player.playbackState === MediaPlayer.PlayingState)
+                player.pause();
+            else
+                player.play();
+            break;
+        case Qt.Key_Back:
+        case Qt.Key_Escape:
+            if (nextCard.visible) {
+                page.autoNext = false;
+                break;
+            }
+            return;
         case Qt.Key_MediaTogglePlayPause:
         case Qt.Key_MediaPlay:
         case Qt.Key_MediaPause:
@@ -323,5 +496,9 @@ FocusScope {
         showOsd();
     }
 
-    Component.onCompleted: showOsd()
+    Component.onCompleted: {
+        if (startAt > 0)
+            resumeAt = startAt;
+        showOsd();
+    }
 }

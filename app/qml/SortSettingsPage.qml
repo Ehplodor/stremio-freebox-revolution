@@ -1,4 +1,5 @@
 import QtQuick 2.15
+import "../js/theme.js" as T
 import "../js/core/sorting.js" as Sorting
 
 // Reglages du tri des flux. Haut/Bas : choisir une ligne ; Gauche/Droite : changer la valeur
@@ -24,21 +25,21 @@ FocusScope {
 
     Rectangle {
         anchors.fill: parent
-        color: "#0e1318"
+        color: T.bg
     }
 
     Text {
         id: header
         x: 60
         y: 40
-        color: "white"
+        color: T.text
         font.pixelSize: 36
         font.bold: true
         text: "Tri des sources"
     }
     Text {
         anchors { left: header.left; top: header.bottom; topMargin: 8 }
-        color: "#9aa7b4"
+        color: T.textMuted
         font.pixelSize: 18
         text: "Gauche/Droite : changer (sur un critere : le monter ou le descendre) · OK : basculer · Retour : fermer. Enregistre automatiquement."
     }
@@ -51,7 +52,7 @@ FocusScope {
         model: page.rows
         spacing: 4
         highlightMoveDuration: 0
-        highlight: Rectangle { color: "#2a6fdb"; radius: 4 }
+        highlight: Rectangle { color: T.surfaceHigh; radius: T.radiusSmall; border.color: T.focus; border.width: 2 }
         delegate: Item {
             width: list.width
             height: 46
@@ -61,19 +62,19 @@ FocusScope {
                 visible: parent.separator
                 width: parent.width
                 height: 1
-                color: "#33414f"
+                color: T.line
                 anchors.top: parent.top
             }
             Text {
                 x: 16
                 anchors.verticalCenter: parent.verticalCenter
-                color: "#c8d0d8"
+                color: T.textMuted
                 font.pixelSize: 20
                 text: modelData.label
             }
             Text {
                 anchors { right: parent.right; rightMargin: 16; verticalCenter: parent.verticalCenter }
-                color: "white"
+                color: T.text
                 font.pixelSize: 20
                 font.bold: true
                 text: modelData.value ? "◀  " + modelData.value + "  ▶" : ""

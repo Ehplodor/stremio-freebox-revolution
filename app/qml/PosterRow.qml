@@ -1,94 +1,169 @@
 import QtQuick 2.15
+import "../js/theme.js" as T
 import "../js/core/addons.js" as Addons
 
-// Une rangee de l'accueil : titre du catalogue + affiches defilant horizontalement.
+// Une rangee de l'accueil : titre + affiches defilant horizontalement.
 FocusScope {
     id: row
 
     property string title: ""
     property var metas: []
-    property string status: ""          // "", "chargement", ou message d'erreur
+    property string status: ""          // "", "chargement", "vide", "erreur"
     property int loadedImages: 0
     property int failedImages: 0
-    property string companion: ""       // service compagnon, pour convertir les affiches WebP
+    property string companion: ""       // agent du PC, pour convertir les affiches WebP
+    property var progressOf: null       // function(meta) -> 0..1 (barre de progression)
+    readonly property var currentMeta: list.currentIndex >= 0 && list.currentIndex < metas.length ? metas[list.currentIndex] : null
     signal activated(var meta)
 
-    height: 330
+    height: T.posterH + 78
 
-    Text {
-        id: label
-        x: 40
-        color: row.activeFocus ? "white" : "#9aa7b4"
-        font.pixelSize: 24
-        font.bold: row.activeFocus
-        text: row.title + (row.status ? "  (" + row.status + ")" : "")
+    Row {
+        id: header
+        x: T.margin
+        spacing: 12
+        Text {
+            text: row.title
+            color: row.activeFocus ? T.text : T.textMuted
+            font.pixelSize: T.fontBody + 2
+            font.bold: true
+            Behavior on color { ColorAnimation { duration: T.anim } }
+        }
+        Text {
+            visible: row.status !== ""
+            text: row.status === "chargement" ? "chargement…" : row.status
+            color: T.textDim
+            font.pixelSize: T.fontSmall
+        }
     }
 
     ListView {
         id: list
-        anchors { top: label.bottom; topMargin: 10; left: parent.left; right: parent.right; bottom: parent.bottom }
+        anchors { top: header.bottom; topMargin: 12; left: parent.left; right: parent.right; bottom: parent.bottom }
         orientation: ListView.Horizontal
-        leftMargin: 40
-        rightMargin: 40
-        spacing: 16
+        leftMargin: T.margin
+        rightMargin: T.margin
+        spacing: 18
         focus: true
-        clip: true
         model: row.metas
-        cacheBuffer: 400
-        highlightMoveDuration: 120
-        preferredHighlightBegin: 40
-        preferredHighlightEnd: width - 240
+        cacheBuffer: 600
+        highlightMoveDuration: T.anim
+        preferredHighlightBegin: T.margin
+        preferredHighlightEnd: width - T.margin - T.posterW
         highlightRangeMode: ListView.ApplyRange
 
+        // Squelettes pendant le chargement.
+        Row {
+            visible: row.status === "chargement" && list.count === 0
+            x: T.margin
+            spacing: 18
+            Repeater {
+                model: 7
+                Rectangle {
+                    width: T.posterW
+                    height: T.posterH
+                    radius: T.radius
+                    color: T.surface
+                    SequentialAnimation on opacity {
+                        loops: Animation.Infinite
+                        running: parent.visible
+                        NumberAnimation { from: 0.45; to: 0.9; duration: 700 }
+                        NumberAnimation { from: 0.9; to: 0.45; duration: 700 }
+                    }
+                }
+            }
+        }
+
         delegate: Item {
-            width: 180
+            id: cell
+            width: T.posterW
             height: list.height
-            property bool current: ListView.isCurrentItem && row.activeFocus
+            readonly property bool current: ListView.isCurrentItem && row.activeFocus
+            readonly property real progress: row.progressOf ? row.progressOf(modelData) : (modelData.progress || 0)
+            z: current ? 2 : 1
 
-            Rectangle {
-                id: frame
-                width: 180
-                height: 270
-                color: "#1d2733"
-                border.width: parent.current ? 4 : 0
-                border.color: "#f5f5f5"
-                scale: parent.current ? 1.05 : 1.0
-                Behavior on scale { NumberAnimation { duration: 100 } }
+            Item {
+                id: card
+                width: T.posterW
+                height: T.posterH
+                scale: cell.current ? 1.08 : 1.0
+                transformOrigin: Item.Bottom
+                Behavior on scale { NumberAnimation { duration: T.anim; easing.type: Easing.OutCubic } }
 
-                Image {
-                    property bool retried: false
-                    anchors { fill: parent; margins: frame.border.width }
-                    asynchronous: true
-                    fillMode: Image.PreserveAspectCrop
-                    // Petites affiches : peu de memoire sur le Player.
-                    sourceSize { width: 180; height: 270 }
-                    source: Addons.posterUrl(modelData.poster)
-                    onStatusChanged: {
-                        if (status === Image.Ready) {
-                            row.loadedImages++;
-                        } else if (status === Image.Error && !retried && row.companion) {
-                            retried = true;
-                            source = Addons.posterFallback(modelData.poster, row.companion);
-                        } else if (status === Image.Error) {
-                            row.failedImages++;
+                // Halo du focus
+                Rectangle {
+                    anchors { fill: parent; margins: -5 }
+                    radius: T.radius + 4
+                    color: "transparent"
+                    border.width: 3
+                    border.color: T.focus
+                    opacity: cell.current ? 1 : 0
+                    Behavior on opacity { NumberAnimation { duration: T.anim } }
+                }
+
+                Rectangle {
+                    id: frame
+                    anchors.fill: parent
+                    radius: T.radius
+                    color: T.surface
+                    clip: true
+
+                    Text {
+                        anchors { fill: parent; margins: 12 }
+                        visible: poster.status !== Image.Ready
+                        verticalAlignment: Text.AlignVCenter
+                        horizontalAlignment: Text.AlignHCenter
+                        color: T.textMuted
+                        wrapMode: Text.Wrap
+                        font.pixelSize: T.fontSmall
+                        text: modelData.name || ""
+                    }
+
+                    Image {
+                        id: poster
+                        property bool retried: false
+                        anchors.fill: parent
+                        asynchronous: true
+                        fillMode: Image.PreserveAspectCrop
+                        // Petites affiches : peu de memoire sur le Player.
+                        sourceSize { width: T.posterW; height: T.posterH }
+                        source: Addons.posterUrl(modelData.poster)
+                        opacity: status === Image.Ready ? 1 : 0
+                        Behavior on opacity { NumberAnimation { duration: 250 } }
+                        onStatusChanged: {
+                            if (status === Image.Ready) {
+                                row.loadedImages++;
+                            } else if (status === Image.Error && !retried && row.companion && modelData.poster) {
+                                retried = true;
+                                source = Addons.posterFallback(modelData.poster, row.companion);
+                            } else if (status === Image.Error) {
+                                row.failedImages++;
+                            }
+                        }
+                    }
+
+                    // Barre de progression (reprise de lecture)
+                    Rectangle {
+                        visible: cell.progress > 0
+                        anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+                        height: 6
+                        color: Qt.rgba(0, 0, 0, 0.6)
+                        Rectangle {
+                            height: parent.height
+                            width: parent.width * Math.min(1, cell.progress)
+                            color: cell.progress >= 1 ? T.ok : T.accent
                         }
                     }
                 }
-                Text {
-                    anchors { fill: parent; margins: 10 }
-                    visible: !modelData.poster
-                    color: "white"
-                    wrapMode: Text.Wrap
-                    font.pixelSize: 18
-                    text: modelData.name
-                }
             }
+
             Text {
-                anchors { top: frame.bottom; topMargin: 8; left: frame.left; right: frame.right }
-                color: parent.current ? "white" : "#9aa7b4"
+                anchors { top: card.bottom; topMargin: 10; left: card.left; right: card.right }
+                color: cell.current ? T.text : T.textMuted
                 elide: Text.ElideRight
-                font.pixelSize: 16
-                text: modelData.name
+                font.pixelSize: T.fontSmall
+                text: modelData.name || ""
+                opacity: cell.current ? 1 : 0.8
             }
         }
 

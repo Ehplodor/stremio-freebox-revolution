@@ -15,6 +15,12 @@ Le Player parle a ce service (port 11480 par defaut) au lieu du port 11470 de St
   - /image?url=... renvoie l'image en JPEG si elle est en WebP (le Player ne decode pas
     le WebP) ; necessite Pillow, sinon l'image est relayee telle quelle.
 
+Agent du PC (prefixe /fbx/, jamais relaye) :
+  - /fbx/api/status : identite du PC (nom, identifiant stable), etat du serveur Stremio,
+    version de l'appli ; l'appli du Player s'en sert pour trouver et reconnaitre le PC ;
+  - POST /fbx/api/start-stremio : demarre Stremio Desktop s'il ne tourne pas ;
+  - /fbx/app/... et /fbx/bootstrap/... : fichiers de l'appli et du lanceur du Player.
+
 Sans dependance obligatoire (Python 3.8+, Pillow en option). Exemple :
   python companion/companion.py
   python companion/companion.py --port 11480 --stremio http://127.0.0.1:11470
@@ -24,10 +30,16 @@ import argparse
 import http.server
 import io
 import ipaddress
+import json
+import mimetypes
+import os
 import re
 import socket
 import socketserver
+import subprocess
 import sys
+import time
+import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -37,7 +49,17 @@ try:
 except ImportError:  # Pillow absent : pas de conversion WebP
     Image = None
 
+AGENT_VERSION = "2.0"
 DEFAULT_PORT = 11480
+ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+CONFIG_DIR = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "stremio-fbx")
+CONFIG_FILE = os.path.join(CONFIG_DIR, "agent.json")
+STREMIO_CANDIDATES = [
+    os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Stremio", "stremio-shell-ng.exe"),
+    os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "LNV", "Stremio-4", "stremio.exe"),
+    os.path.join(os.environ.get("ProgramFiles", ""), "Stremio", "stremio.exe"),
+    os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "stremio-service", "stremio-service.exe"),
+]
 DEFAULT_STREMIO = "http://127.0.0.1:11470"
 HOP_HEADERS = ("Range", "Content-Type")
 
@@ -255,6 +277,172 @@ def image(handler):
     _write(handler, data)
 
 
+# ----- Agent : identite du PC, etat, fichiers de l'appli -----
+
+def load_config():
+    """Identite stable du PC (cree au premier lancement) : { pcId, pcName }."""
+    try:
+        with open(CONFIG_FILE, encoding="utf-8") as f:
+            cfg = json.load(f)
+    except (OSError, ValueError):
+        cfg = {}
+    changed = False
+    if not cfg.get("pcId"):
+        cfg["pcId"] = uuid.uuid4().hex[:12]
+        changed = True
+    if not cfg.get("pcName"):
+        cfg["pcName"] = socket.gethostname()
+        changed = True
+    if changed:
+        save_config(cfg)
+    return cfg
+
+
+def save_config(cfg):
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2, ensure_ascii=False)
+
+
+def stremio_status(stremio):
+    """{ ok, version } du serveur de streaming (reponse rapide ou echec)."""
+    try:
+        with urllib.request.urlopen(stremio + "/settings", timeout=2) as rsp:
+            values = json.load(rsp).get("values", {})
+            return {"ok": True, "version": values.get("serverVersion", "")}
+    except Exception:  # noqa: BLE001 - toute erreur = serveur absent
+        return {"ok": False, "version": ""}
+
+
+def find_stremio_exe():
+    for path in STREMIO_CANDIDATES:
+        if path and os.path.isfile(path):
+            return path
+    return None
+
+
+def start_stremio(stremio, wait=60):
+    """Demarre Stremio Desktop s'il ne repond pas ; attend son serveur. -> (ok, message)"""
+    if stremio_status(stremio)["ok"]:
+        return True, "Stremio tourne deja"
+    exe = find_stremio_exe()
+    if not exe:
+        return False, "Stremio Desktop introuvable sur ce PC"
+    flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    subprocess.Popen([exe], cwd=os.path.dirname(exe), creationflags=flags, close_fds=True)
+    deadline = time.time() + wait
+    while time.time() < deadline:
+        if stremio_status(stremio)["ok"]:
+            return True, "Stremio demarre"
+        time.sleep(1)
+    return False, "Stremio lance mais son serveur ne repond pas apres %d s" % wait
+
+
+def app_version():
+    try:
+        with open(os.path.join(ROOT, "app", "manifest.json"), encoding="utf-8") as f:
+            return json.load(f).get("version", "")
+    except (OSError, ValueError):
+        return ""
+
+
+def local_ip_towards(host="192.168.0.254"):
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect((host, 80))
+            return s.getsockname()[0]
+    except OSError:
+        return ""
+
+
+def send_json(handler, status, data):
+    body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+    handler.send_response(status)
+    handler.send_header("Content-Type", "application/json; charset=utf-8")
+    handler.send_header("Cache-Control", "no-store")
+    handler.send_header("Content-Length", str(len(body)))
+    handler.end_headers()
+    _write(handler, body)
+
+
+STATIC_DIRS = {"/fbx/app/": os.path.join(ROOT, "app"), "/fbx/bootstrap/": os.path.join(ROOT, "bootstrap")}
+
+
+def static_file(handler, method="GET"):
+    """Fichiers de l'appli (sans cache, avec Range). Refuse toute sortie du dossier."""
+    path = urllib.parse.unquote(handler.path.split("?", 1)[0])
+    for prefix, folder in STATIC_DIRS.items():
+        if path.startswith(prefix):
+            target = os.path.normpath(os.path.join(folder, path[len(prefix):]))
+            if not target.startswith(os.path.normpath(folder) + os.sep) or not os.path.isfile(target):
+                handler.send_error(404)
+                return
+            break
+    else:
+        handler.send_error(404)
+        return
+    size = os.path.getsize(target)
+    start, end, status = 0, size - 1, 200
+    m = re.match(r"bytes=(\d*)-(\d*)$", handler.headers.get("Range", ""))
+    if m and size:
+        if m.group(1):
+            start = int(m.group(1))
+            end = min(int(m.group(2)), size - 1) if m.group(2) else size - 1
+        elif m.group(2):
+            start = max(size - int(m.group(2)), 0)
+        if start > end:
+            handler.send_response(416)
+            handler.send_header("Content-Range", "bytes */%d" % size)
+            handler.send_header("Content-Length", "0")
+            handler.end_headers()
+            return
+        status = 206
+    ctype = mimetypes.guess_type(target)[0] or "application/octet-stream"
+    if target.endswith((".qml", ".js", "qmldir")):
+        ctype = "text/plain; charset=utf-8"
+    handler.send_response(status)
+    handler.send_header("Content-Type", ctype)
+    handler.send_header("Content-Length", str(end - start + 1))
+    handler.send_header("Accept-Ranges", "bytes")
+    handler.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+    if status == 206:
+        handler.send_header("Content-Range", "bytes %d-%d/%d" % (start, end, size))
+    handler.end_headers()
+    if method == "HEAD":
+        return
+    with open(target, "rb") as f:
+        f.seek(start)
+        remaining = end - start + 1
+        try:
+            while remaining > 0:
+                chunk = f.read(min(65536, remaining))
+                if not chunk:
+                    break
+                handler.wfile.write(chunk)
+                remaining -= len(chunk)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            pass
+
+
+def agent_route(handler, method):
+    path = handler.path.split("?", 1)[0]
+    if path == "/fbx/api/status":
+        cfg = handler.config
+        send_json(handler, 200, {
+            "agent": "stremio-fbx", "agentVersion": AGENT_VERSION, "appVersion": app_version(),
+            "pcId": cfg["pcId"], "pcName": cfg["pcName"], "ip": local_ip_towards(),
+            "stremio": stremio_status(handler.stremio),
+            "testAddon": handler.test_addon or None,
+        })
+    elif path == "/fbx/api/start-stremio" and method == "POST":
+        ok, message = start_stremio(handler.stremio)
+        send_json(handler, 200 if ok else 503, {"ok": ok, "message": message})
+    elif path.startswith(("/fbx/app/", "/fbx/bootstrap/")):
+        static_file(handler, method)
+    else:
+        handler.send_error(404)
+
+
 def _write(handler, data):
     try:
         handler.wfile.write(data)
@@ -265,8 +453,13 @@ def _write(handler, data):
 class CompanionHandler(http.server.BaseHTTPRequestHandler):
     stremio = DEFAULT_STREMIO
     protocol_version = "HTTP/1.1"
+    config = {"pcId": "", "pcName": ""}
+    test_addon = ""
+    quiet = False
 
     def do_GET(self):
+        if self.path.startswith("/fbx/"):
+            return agent_route(self, "GET")
         if self.path.startswith("/image?"):
             return image(self)
         if self.path.startswith("/subtitles/embedded.vtt?"):
@@ -274,13 +467,27 @@ class CompanionHandler(http.server.BaseHTTPRequestHandler):
         relay(self, self.stremio, self.path)
 
     def do_HEAD(self):
+        if self.path.startswith("/fbx/"):
+            return agent_route(self, "HEAD")
         relay(self, self.stremio, self.path, "HEAD")
 
     def do_POST(self):
+        if self.path.startswith("/fbx/"):
+            return agent_route(self, "POST")
         relay(self, self.stremio, self.path, "POST")
 
     def log_message(self, fmt, *args):
-        sys.stderr.write("[compagnon] %s %s\n" % (self.client_address[0], fmt % args))
+        if not self.quiet:
+            sys.stderr.write("[compagnon] %s %s\n" % (self.client_address[0], fmt % args))
+
+
+def make_server(port=DEFAULT_PORT, stremio=DEFAULT_STREMIO, test_addon="", quiet=False):
+    """Serveur pret a l'emploi (utilise aussi par tools/launcher.py)."""
+    CompanionHandler.stremio = stremio.rstrip("/")
+    CompanionHandler.config = load_config()
+    CompanionHandler.test_addon = test_addon
+    CompanionHandler.quiet = quiet
+    return ThreadedHTTPServer(("0.0.0.0", port), CompanionHandler)
 
 
 class ThreadedHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
@@ -295,8 +502,7 @@ def main():
     parser.add_argument("--stremio", default=DEFAULT_STREMIO, help="serveur Stremio (%s)" % DEFAULT_STREMIO)
     args = parser.parse_args()
 
-    CompanionHandler.stremio = args.stremio.rstrip("/")
-    server = ThreadedHTTPServer(("0.0.0.0", args.port), CompanionHandler)
+    server = make_server(args.port, args.stremio)
     print("Compagnon a l'ecoute sur le port %d, relais vers %s. Ctrl+C pour arreter."
           % (args.port, CompanionHandler.stremio))
     try:
