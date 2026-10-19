@@ -18,6 +18,11 @@ FocusScope {
     property int subtitleIndex: 0
     property int resumeAt: -1            // position (ms) a retrouver apres un rechargement
     signal finished()
+    signal failed(string reason)
+    property bool failedOnce: false      // erreur + media invalide arrivent souvent ensemble
+    // Le lecteur du Player peut rester sur "Loading" sans erreur (ex. H.264 10 bits) :
+    // sans image apres ce delai, la lecture est consideree en echec.
+    property int startTimeoutMs: 15000
     signal logMessage(string msg)
     signal audioChosen(int index)
     signal subtitleChosen(int index)
@@ -30,8 +35,27 @@ FocusScope {
     // Recharge un autre flux (autre piste audio) en gardant la position.
     function reload(url) {
         resumeAt = player.position;
+        startWatchdog.restart();
         logMessage("rechargement a " + fmt(resumeAt));
         source = url;
+    }
+
+    function fail(reason) {
+        if (failedOnce)
+            return;
+        failedOnce = true;
+        failed(reason);
+    }
+
+    // Reprise apres rechargement : une seule fois, des que le flux est pret et navigable.
+    function tryResume() {
+        if (resumeAt > 0 && player.seekable
+                && (player.status === MediaPlayer.Buffered || player.status === MediaPlayer.Loaded)) {
+            const at = resumeAt;
+            resumeAt = -1;
+            player.seek(at);
+            logMessage("reprise a " + fmt(at));
+        }
     }
 
     function statusName(s) {
@@ -60,6 +84,22 @@ FocusScope {
         color: "black"
     }
 
+    Timer {
+        id: startWatchdog
+        interval: page.startTimeoutMs
+        running: page.source !== ""
+        onTriggered: page.fail("pas de lecture apres " + Math.round(interval / 1000) + " s")
+    }
+
+    // Lecture reellement commencee : la position avance.
+    Connections {
+        target: player
+        function onPositionChanged() {
+            if (player.position > 0 && startWatchdog.running)
+                startWatchdog.stop();
+        }
+    }
+
     MediaPlayer {
         id: player
         autoPlay: true
@@ -72,13 +112,15 @@ FocusScope {
             page.logMessage("lecteur : " + page.statusName(status));
             if (status === MediaPlayer.EndOfMedia)
                 page.finished();
-            if ((status === MediaPlayer.Buffered || status === MediaPlayer.Loaded) && page.resumeAt > 0 && seekable) {
-                seek(page.resumeAt);
-                page.logMessage("reprise a " + page.fmt(page.resumeAt));
-                page.resumeAt = -1;
-            }
+            else if (status === MediaPlayer.InvalidMedia)
+                page.fail("media invalide");
+            page.tryResume();
         }
-        onError: page.logMessage("lecteur erreur " + error + " : " + errorString)
+        onSeekableChanged: page.tryResume()
+        onError: {
+            page.logMessage("lecteur erreur " + error + " : " + errorString);
+            page.fail(errorString || "erreur " + error);
+        }
     }
 
     VideoOutput {
@@ -260,12 +302,14 @@ FocusScope {
             break;
         case Qt.Key_Right:
         case Qt.Key_MediaNext:
+            page.resumeAt = -1;
             // Duree encore inconnue (0) pendant le chargement : ne pas revenir au debut.
             if (player.duration > 0)
                 player.seek(Math.min(player.position + 30000, player.duration));
             break;
         case Qt.Key_Left:
         case Qt.Key_MediaPrevious:
+            page.resumeAt = -1;
             player.seek(Math.max(player.position - 10000, 0));
             break;
         case Qt.Key_Up:

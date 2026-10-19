@@ -115,6 +115,28 @@ réglage global (`transcodeMaxBitRate`). L'appli demande donc `maxWidth=1280` pa
 - Sur la box, Harry Potter : 599 flux (Torrentio a répondu cette fois), 426 affichés,
   173 masqués ; en tête des 1080p en cache, français/multi, H.264.
 
+## Relecture du code (bugs subtils corrigés)
+
+| Bug | Effet | Correction | Vérifié |
+|---|---|---|---|
+| URL d'addon avec paramètres après `manifest.json` | Toutes les requêtes vers cet addon cassées | `/manifest.json` remplacé sur place, comme stremio-core | test |
+| Lecture directe que le Player ne sait pas décoder (H.264 10 bits) | Écran noir sur « Loading » sans erreur | Chien de garde 15 s (60 s en transcodage) puis nouvel essai en transcodage forcé | box |
+| Erreur de lecture signalée deux fois | Deux relances concurrentes | Échec signalé une seule fois, un seul lancement à la fois | test |
+| Fin de vidéo : lecteur détruit pendant son propre signal | Plantage possible | Arrêt différé (`Qt.callLater`) | box |
+| Reprise après changement de piste audio | Retour en arrière intempestif après un saut manuel | Reprise unique, annulée par un saut | relu |
+| Liste des flux reconstruite à chaque addon | Sélection ramenée en haut, OK sur un autre flux | Sélection conservée | relu |
+| Réponse d'une fiche précédente | Mauvaise fiche affichée après deux clics rapides | Réponses périmées ignorées | relu |
+| Rangées de l'accueil recréées au défilement | Catalogues rechargés, liste qui saute | Catalogues gardés en mémoire | box |
+| Bibliothèque du compte en échec | Addons du compte perdus aussi | Bibliothèque facultative | relu |
+| Réglages lus avant d'être chargés | Compte ou tri ignorés au démarrage (selon l'ordre) | Démarrage différé | box |
+| Échec de préparation de lecture | Rien à l'écran | Message dans la fiche | relu |
+| Compagnon : réponse sans longueur en HTTP/1.1 | Client en attente infinie (latent) | `Connection: close` | relu |
+| Messages d'erreur HTTP | Clés de débrideur dans la console du PC | Hôte seulement | test |
+| Lanceur : relance juste après une autre appli | L'appli ne démarre pas | Nouvelle demande si `main.qml` n'est pas demandé en 10 s | box |
+| Tri : H.264 10 bits compté comme lisible en direct | Mauvaise source en tête | Détecté (« 10bit », « Hi10P ») | test |
+
+Série validée sur la box : Dark, 26 épisodes, 227 flux pour S1E1.
+
 ## Conséquences pour le plan
 
 - Le risque « runtime ancien » disparaît : on peut écrire le mini-core en JavaScript moderne.

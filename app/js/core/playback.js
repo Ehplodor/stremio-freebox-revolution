@@ -148,14 +148,14 @@ function torrentMediaUrl(settings, resolved, createResponse) {
 }
 
 // Derniere etape : URL a donner au lecteur, d'apres le probe (null si probe en echec).
-function playUrl(settings, mediaUrl, probe) {
-    if (canPlayDirect(probe))
+function playUrl(settings, mediaUrl, probe, forceTranscoding) {
+    if (!forceTranscoding && canPlayDirect(probe))
         return { url: mediaUrl, transcoded: false };
-    return { url: hlsUrl(settings, mediaUrl, false), transcoded: true };
+    return { url: hlsUrl(settings, mediaUrl, !!forceTranscoding), transcoded: true };
 }
 
 // Chaine complete avec un transport : fetchJson(url) et postJson(url, body) -> Promise.
-function plan(stream, settings, transport, seriesInfo) {
+function plan(stream, settings, transport, seriesInfo, forceTranscoding) {
     const r = resolve(stream, settings, seriesInfo);
     if (r.kind === "external" || r.kind === "unsupported")
         return Promise.resolve(r);
@@ -166,7 +166,7 @@ function plan(stream, settings, transport, seriesInfo) {
         transport.fetchJson(probeUrl(settings, mediaUrl))
             .catch(() => null)
             .then(probe => {
-                const p = playUrl(settings, mediaUrl, probe);
+                const p = playUrl(settings, mediaUrl, probe, forceTranscoding);
                 p.kind = "play";
                 p.mediaUrl = mediaUrl;
                 p.probe = probe;

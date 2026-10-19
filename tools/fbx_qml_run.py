@@ -66,8 +66,12 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
     """Serveur de fichiers sans cache, avec prise en charge de Range (lecteurs video, ffmpeg)."""
 
     STREMIO = companion.DEFAULT_STREMIO
+    entry_file = "/main.qml"
+    entry_loaded = threading.Event()     # le Player a demande le fichier QML d'entree
 
     def do_GET(self):
+        if self.path.split("?", 1)[0] == self.entry_file:
+            self.entry_loaded.set()
         # /stremio/... : meme relais que le service compagnon (companion/companion.py).
         if self.path.startswith("/stremio/"):
             self._proxied = True
@@ -212,11 +216,21 @@ def main():
     threads = []
     try:
         if not args.serve_only:
-            result = jsonrpc("http://%s/pub/devel" % host, "debug_qml_app", {
-                "manifest_url": base + "manifest.json",
-                "entry_point": args.entry_point,
-                "wait": False,
-            })
+            with open(manifest, encoding="utf-8") as f:
+                entry = json.load(f).get("entryPoints", {}).get(args.entry_point, {}).get("file", "main.qml")
+            NoCacheHandler.entry_file = "/" + entry
+            # Relance juste apres une autre appli : le Player lit parfois manifest.json sans
+            # lancer l'appli. Si le fichier d'entree n'est pas demande en 10 s, on redemande.
+            for attempt in range(1, 4):
+                NoCacheHandler.entry_loaded.clear()
+                result = jsonrpc("http://%s/pub/devel" % host, "debug_qml_app", {
+                    "manifest_url": base + "manifest.json",
+                    "entry_point": args.entry_point,
+                    "wait": False,
+                })
+                if NoCacheHandler.entry_loaded.wait(10):
+                    break
+                print("L'appli ne demarre pas (essai %d/3), nouvelle demande..." % attempt)
             for port, out in ((result["stdout_port"], sys.stdout), (result["stderr_port"], sys.stderr)):
                 t = threading.Thread(target=dump_socket, args=(host, port, out, stop), daemon=True)
                 t.start()

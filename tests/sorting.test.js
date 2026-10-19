@@ -89,3 +89,12 @@ test("fichiers trop petits masques, H.264 prefere a qualite egale, taille en Mo"
     assert.equal(shown.visible.length, 3);
     assert.match(shown.visible.find(x => x.addon === "extrait").badges, /120 Mo/);
 });
+
+test("H.264 10 bits non compte comme lisible directement", () => {
+    const list = [
+        { addon: "10b", stream: { name: "[AD+] T", title: "Anime 1080p x264 10bit FRENCH" } },
+        { addon: "8b", stream: { name: "[AD+] T", title: "Anime 1080p x264 FRENCH" } }
+    ];
+    assert.equal(sorting.parse(list[0].stream).codec, "H.264 10 bits");
+    assert.deepEqual(plain(sorting.sortStreams(list, null).visible.map(x => x.addon)), ["8b", "10b"]);
+});

@@ -31,10 +31,15 @@ function extraPath(extra) {
 }
 
 // /{resource}/{type}/{id}[/{extra}].json
+// Comme stremio-core (http_transport.rs) : "/manifest.json" est remplace sur place, ce qui
+// garde un eventuel "?parametre" place apres (certains addons y mettent leur configuration).
 function resourceUrl(transportUrl, resource, type, id, extra) {
     const tail = extraPath(extra);
-    return baseUrl(transportUrl) + "/" + resource + "/" + encodeURIComponent(type) + "/"
+    const path = "/" + resource + "/" + encodeURIComponent(type) + "/"
         + encodeURIComponent(id) + (tail ? "/" + tail : "") + ".json";
+    if (transportUrl.indexOf("/manifest.json") !== -1)
+        return transportUrl.replace("/manifest.json", path);
+    return baseUrl(transportUrl) + path;
 }
 
 // Les ressources d'un manifest sont des chaines ou des objets { name, types, idPrefixes }.

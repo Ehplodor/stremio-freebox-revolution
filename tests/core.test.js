@@ -41,6 +41,8 @@ test("URL des ressources selon le protocole", () => {
         "https://v3-cinemeta.strem.io/catalog/series/top/search=dark%20knight&skip=0.json");
     assert.equal(addons.resourceUrl(CINEMETA, "stream", "series", "tt5753856:1:1"),
         "https://v3-cinemeta.strem.io/stream/series/tt5753856%3A1%3A1.json");
+    assert.equal(addons.resourceUrl("https://a.example/conf/manifest.json?key=K", "stream", "movie", "tt1"),
+        "https://a.example/conf/stream/movie/tt1.json?key=K", "parametres apres manifest.json gardes");
 });
 
 test("ressources prises en charge par chaque addon", () => {
@@ -214,4 +216,17 @@ test("pistes audio et sous-titres", () => {
     const options = [{ kind: "off" }, { kind: "embedded", language: "eng" }, { kind: "external", language: "fre" }];
     assert.equal(playback.defaultSubtitle(options, [{ language: "eng" }]), 2);
     assert.equal(playback.defaultSubtitle(options, [{ language: "fre" }]), 0);
+});
+
+test("transcodage force apres un echec de lecture directe", async () => {
+    const transport = {
+        fetchJson: () => Promise.resolve({ format: { name: "matroska" },
+            streams: [{ track: "video", codec: "h264" }, { track: "audio", codec: "aac" }] }),
+        postJson: null
+    };
+    const direct = await playback.plan({ url: "https://cdn/x.mkv" }, SETTINGS, transport);
+    assert.equal(direct.transcoded, false);
+    const forced = await playback.plan({ url: "https://cdn/x.mkv" }, SETTINGS, transport, null, true);
+    assert.ok(forced.transcoded);
+    assert.match(forced.url, /forceTranscoding=1/);
 });

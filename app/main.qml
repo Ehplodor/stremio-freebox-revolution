@@ -18,12 +18,12 @@ Application {
     property var sortPrefs: Sorting.normalize(null)
     property string authKey: ""
     property var localRows: ({})         // rangees issues du compte : { continue: [...], library: [...] }
+    property var catalogCache: ({})      // transportUrl|type|id -> Promise des metas (delegues recrees en defilant)
+    property var playToken: null         // lecture en preparation (ignore un second OK)
     property var current: null           // { type, id, videoId, meta }
     property var client: Addons.createClient(Http.fetchJson)
     readonly property var transport: ({ fetchJson: Http.fetchJson, postJson: Http.postJson })
     property var account: Account.createAccount(transport)
-    // Catalogues deja charges : les rangees de l'accueil sont detruites et recreees en defilant.
-    property var catalogCache: ({})
 
     function log(msg) {
         console.log("[app] " + msg);
@@ -33,7 +33,10 @@ Application {
     function loadAddons() {
         authKey = settings.authKey || "";
         const fromAccount = authKey
-            ? Promise.all([account.addons(authKey), account.libraryItems(authKey)]).then(r => {
+            ? Promise.all([account.addons(authKey), account.libraryItems(authKey).catch(e => {
+                log("bibliotheque indisponible : " + e);
+                return [];
+            })]).then(r => {
                 log("compte : " + r[0].length + " addons, " + r[1].length + " elements de bibliotheque");
                 localRows = {
                     continue: Account.continueWatching(r[1]).map(Account.toMeta),
@@ -133,6 +136,16 @@ Application {
         loadAddons();
     }
 
+    // Catalogue d'une rangee, une seule requete par session d'accueil.
+    function catalog(ref) {
+        const key = ref.transportUrl + "|" + ref.type + "|" + ref.id;
+        if (!catalogCache[key]) {
+            catalogCache[key] = client.catalog(ref);
+            catalogCache[key].catch(() => { delete catalogCache[key]; });   // reessai au prochain affichage
+        }
+        return catalogCache[key];
+    }
+
     function typeLabel(type) {
         return type === "movie" ? "Films" : type === "series" ? "Series" : type;
     }
@@ -141,17 +154,17 @@ Application {
 
     function openMeta(type, id) {
         log("fiche " + type + "/" + id);
-        current = { type: type, id: id, videoId: null, meta: null };
+        const opened = { type: type, id: id, videoId: null, meta: null };
+        current = opened;
         details.meta = null;
         details.episodes = [];
         details.streams = [];
         details.streamsStatus = "";
         screen = "details";
         details.forceActiveFocus();
-        const request = current;              // ignore la reponse si une autre fiche a ete ouverte
         client.meta(addons, type, id).then(meta => {
-            if (current !== request)
-                return;
+            if (current !== opened)
+                return;                          // une autre fiche a ete ouverte entre-temps
             current.meta = meta;
             details.meta = meta;
             const episodes = [];
@@ -159,12 +172,16 @@ Application {
             if (type === "series" && episodes.length) {
                 details.episodes = episodes;
                 log(meta.name + " : " + episodes.length + " episodes");
+                if (autotest.running && Config.AUTOTEST.episode)
+                    loadStreams(type, Config.AUTOTEST.episode);
             } else {
                 loadStreams(type, id);
             }
         }).catch(e => {
-            if (current === request)
-                log("fiche en echec : " + e);
+            if (current !== opened)
+                return;
+            log("fiche en echec : " + e);
+            details.streamsStatus = "fiche indisponible (" + e.message + ")";
         });
     }
 
@@ -229,9 +246,19 @@ Application {
         return parts.length === 3 ? { season: parseInt(parts[1], 10), episode: parseInt(parts[2], 10) } : null;
     }
 
-    function play(item) {
+    function play(item, forceTranscoding) {
+        if (playToken)
+            return;                              // deja en preparation
+        const token = {};
+        playToken = token;
+        const opened = current;
+        details.streamsStatus = "preparation de la lecture...";
         log("choix du flux " + item.addon + " : " + (item.stream.name || "") + " " + (item.stream.title || "").split("\n")[0]);
-        Playback.plan(item.stream, Config.SETTINGS, transport, seriesInfo()).then(p => {
+        Playback.plan(item.stream, Config.SETTINGS, transport, seriesInfo(), forceTranscoding).then(p => {
+            playToken = null;
+            if (current !== opened || screen !== "details")
+                return;                          // l'utilisateur est parti entre-temps
+            refreshStreams();
             if (p.kind === "external") {
                 log("ouverture externe " + p.external);
                 App.urlOpen(p.external, "");
@@ -239,24 +266,47 @@ Application {
             }
             if (p.kind !== "play") {
                 log("flux non lisible : " + p.reason);
+                details.streamsStatus = "flux non lisible : " + p.reason;
                 return;
             }
             const probe = p.probe ? p.probe.streams.map(s => s.track + ":" + s.codec).join(" ") : "probe indisponible";
             log((p.transcoded ? "transcodage" : "lecture directe") + " (" + probe + ") via " + p.url.split("?")[0]);
             const audio = Playback.audioTracks(p.probe);
             current.playback = p;
+            current.playingItem = item;
             pendingSubtitles = null;
             playerLoader.setSource("qml/PlayerPage.qml", {
                 title: current.meta ? current.meta.name : "",
                 source: p.url,
                 audioTracks: audio,
                 audioSwitchable: p.transcoded && audio.length > 1,
+                // Transcodage : le PC peut mettre du temps a preparer le debut (torrent, 4K).
+                startTimeoutMs: p.transcoded ? 60000 : 15000,
                 subtitleTracks: [{ label: "Desactives", kind: "off" }]
             });
             screen = "player";
             playerLoader.forceActiveFocus();
             loadSubtitles(item.stream, p, audio);
-        }).catch(e => log("preparation de la lecture en echec : " + e));
+        }).catch(e => {
+            playToken = null;
+            log("preparation de la lecture en echec : " + e);
+            if (current === opened)
+                details.streamsStatus = "lecture impossible : " + e.message;
+        });
+    }
+
+    // Echec du lecteur : en lecture directe, on retente en transcodage par le PC
+    // (ex. H.264 10 bits que le probe ne distingue pas) ; sinon retour a la fiche.
+    function playbackFailed(reason) {
+        const p = current.playback;
+        log("echec de lecture (" + reason + ")" + (p && !p.transcoded ? ", nouvel essai en transcodage" : ""));
+        Qt.callLater(() => {
+            stopPlayer();
+            if (p && !p.transcoded && current.playingItem)
+                play(current.playingItem, true);
+            else
+                details.streamsStatus = "lecture impossible : " + reason;
+        });
     }
 
     // Piste audio choisie dans le lecteur : on recharge le flux HLS avec cette seule piste.
@@ -418,15 +468,8 @@ Application {
                         return;
                     }
                     const ref = { transportUrl: model.transportUrl, type: model.type, id: model.cid, name: model.name };
-                    const key = ref.transportUrl + "|" + ref.type + "|" + ref.id;
-                    if (app.catalogCache[key]) {
-                        row.metas = app.catalogCache[key];
-                        row.status = row.metas.length ? "" : "vide";
-                        return;
-                    }
                     row.status = "chargement";
-                    app.client.catalog(ref).then(metas => {
-                        app.catalogCache[key] = metas;
+                    app.catalog(ref).then(metas => {
                         row.metas = metas;
                         row.status = metas.length ? "" : "vide";
                         app.log("rangee " + ref.name + " (" + ref.type + ") : " + metas.length + " titres");
@@ -473,7 +516,8 @@ Application {
             visible: app.screen === "player"
             onLoaded: {
                 item.logMessage.connect(app.log);
-                item.finished.connect(app.stopPlayer);
+                item.finished.connect(() => Qt.callLater(app.stopPlayer));
+                item.failed.connect(app.playbackFailed);
                 item.audioChosen.connect(app.chooseAudio);
                 item.subtitleChosen.connect(app.chooseSubtitle);
                 app.applySubtitles();
@@ -612,7 +656,9 @@ Application {
         }
     }
 
-    Component.onCompleted: {
+    Component.onCompleted: Qt.callLater(startApp)
+
+    function startApp() {
         settings.launches = settings.launches + 1;
         try {
             sortPrefs = Sorting.normalize(settings.sortPrefs ? JSON.parse(settings.sortPrefs) : null);

@@ -19,6 +19,8 @@ printf '1\n00:00:01,000 --> 00:00:10,000\nSous-titre de test SRT numero 1\n\n2\n
 "$F" $Q $V $SINE -filter_complex "$PAN" -map 0:v -map "[a]" $X264 -c:a dca -strict -2 -b:a 768k h264_dts.mkv
 "$F" $Q $V $SINE -i test.srt -filter_complex "$PAN" -map 0:v -map "[a]" -map 2:s \
     -c:v libx265 -preset fast -x265-params log-level=error -pix_fmt yuv420p -c:a ac3 -b:a 384k -c:s srt hevc_ac3_srt.mkv
+# H.264 10 bits : le probe le dit lisible, le Player ne le decode probablement pas
+"$F" $Q $V $SINE -c:v libx264 -preset veryfast -pix_fmt yuv420p10le -c:a aac h264_10bit.mkv
 # 2 pistes audio (FR 440 Hz, EN 880 Hz) + sous-titres integres SRT FR et ASS EN
 printf '[Script Info]
 ScriptType: v4.00+

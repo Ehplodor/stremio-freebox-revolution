@@ -15,6 +15,12 @@ function startTimer(ms, fn) {
     return timer;
 }
 
+// Hote seulement : les URL d'addons contiennent souvent des cles (debrideur, compte).
+function hostOf(url) {
+    const m = /^(https?:\/\/[^\/?#]+)/.exec(url);
+    return m ? m[1] : "?";
+}
+
 function request(method, url, body, asText, timeoutMs) {
     const timeout = timeoutMs || TIMEOUT_MS;
     return new Promise((resolve, reject) => {
@@ -34,7 +40,7 @@ function request(method, url, body, asText, timeoutMs) {
             timer.stop();
             timer.destroy();
             if (xhr.status < 200 || xhr.status >= 300) {
-                reject(new Error("HTTP " + xhr.status + " : " + url));
+                reject(new Error("HTTP " + xhr.status + " (" + hostOf(url) + ")"));
                 return;
             }
             if (asText) {
@@ -44,7 +50,7 @@ function request(method, url, body, asText, timeoutMs) {
             try {
                 resolve(xhr.responseText ? JSON.parse(xhr.responseText) : null);
             } catch (e) {
-                reject(new Error("JSON invalide : " + url));
+                reject(new Error("JSON invalide (" + hostOf(url) + ")"));
             }
         };
         xhr.open(method, url);

@@ -32,4 +32,6 @@ const DEV_ADDONS = [
 // Exemple : { type: "movie", id: "fbxtest-multi", tracks: true, playSeconds: 60 }
 // sort: true modifie le tri comme a la telecommande puis remet les preferences.
 // Exemple : { type: "movie", id: "tt0241527", sort: true }
+// Autres exemples : { type: "series", id: "tt5753856", episode: "tt5753856:1:1", noPlay: true }
+//                   { type: "movie", id: "fbxtest-h264-10bit", playSeconds: 45 } (repli en transcodage)
 const AUTOTEST = null;

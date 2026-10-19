@@ -78,7 +78,9 @@ function parse(stream) {
     info.dv = /\b(dv|dovi|dolby[ .-]?vision)\b/i.test(text);
     info.hdr = info.dv || /\bhdr(10\+?)?\b/i.test(text);
     if (/\b(x265|h\.?265|hevc)\b/i.test(text)) info.codec = "HEVC";
-    else if (/\b(x264|h\.?264|avc)\b/i.test(text)) info.codec = "H.264";
+    else if (/\b(x264|h\.?264|avc)\b/i.test(text))
+        // H.264 10 bits (Hi10P) : le Player ne le decode pas, il faudra transcoder.
+        info.codec = /\b(10[ .-]?bits?|hi10p?)\b/i.test(text) ? "H.264 10 bits" : "H.264";
     else if (/\bav1\b/i.test(text)) info.codec = "AV1";
 
     const size = /💾\s*([\d.,]+)\s*(gb|go|mb|mo)/i.exec(text) || /\b([\d.,]+)\s*(gb|go)\b/i.exec(text);
