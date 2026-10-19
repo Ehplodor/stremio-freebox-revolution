@@ -143,6 +143,7 @@ FocusScope {
             page.tryResume();
         }
         onSeekableChanged: page.tryResume()
+        onPlaybackStateChanged: page.logMessage("etat de lecture : " + ["arret", "lecture", "pause"][playbackState])
         onError: {
             page.logMessage("lecteur erreur " + error + " : " + errorString);
             page.fail(errorString || "erreur " + error);
@@ -523,6 +524,7 @@ FocusScope {
 
     focus: true
     Keys.onPressed: {
+        logMessage("touche " + event.key + " (etat " + ["arret", "lecture", "pause"][player.playbackState] + ")");
         switch (event.key) {
         case Qt.Key_Return:
         case Qt.Key_Enter:
