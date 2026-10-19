@@ -1,6 +1,6 @@
 {
     "name": "Revo Stream",
-    "identifier": "org.ehplodor.revostream",
+    "identifier": "com.ehplodor.revostream",
     "description": "Films et series avec vos addons Stremio, via votre PC",
     "version": "2.0.0",
     "capabilities": {

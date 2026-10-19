@@ -1,6 +1,6 @@
 {
     "name": "Revo Stream (dev)",
-    "identifier": "org.ehplodor.stremiofbx",
+    "identifier": "com.ehplodor.revostream.dev",
     "description": "Client compatible avec les addons Stremio pour le Freebox Player",
     "capabilities": {
         "net_wan": "required"
