@@ -77,6 +77,18 @@ réglage global (`transcodeMaxBitRate`). L'appli demande donc `maxWidth=1280` pa
 - Sous-titres SRT de l'addon convertis en VTT par le serveur et affichés par l'appli,
   synchronisés (ligne 1 à 0:09, ligne 2 à 0:19 et 0:29).
 
+## Compte Stremio (étape 6, lecture seule)
+
+- Liaison par code : `link.stremio.com/api/v2/create` puis interrogation de `read` toutes les 3 s.
+  L'écran Compte (touche Menu) affiche le code et son QR code ; validé sur la box (code
+  affiché, interrogation en cours). La validation elle-même demande Rod sur son téléphone.
+- Une fois lié : addons du compte (`addonCollectionGet`) à la place des addons par défaut,
+  rangées « Continuer à regarder » et « Bibliothèque » (`datastoreGet`, collection `libraryItem`).
+  Rien n'est encore écrit sur le compte.
+- Stockage de la clé : `QtQuick.LocalStorage` est refusé aux applis en mode développeur
+  (`can't create path /var/lib/databases/...`). Le `Settings` de `fbx.application`
+  (`App.settings`) fonctionne et persiste entre deux lancements (compteur 1 puis 2).
+
 ## Conséquences pour le plan
 
 - Le risque « runtime ancien » disparaît : on peut écrire le mini-core en JavaScript moderne.
