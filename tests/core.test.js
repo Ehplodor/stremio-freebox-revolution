@@ -93,7 +93,10 @@ test("flux agreges : un addon en erreur ne bloque pas les autres", async () => {
     const client = addons.createClient(fakeFetch({
         "https://t.example/stream/movie/tt1.json": { streams: [{ url: "http://x/film.mp4" }] }
     }));
-    const groups = await client.streams(loadedAddons.concat([torrentio, broken]), "movie", "tt1");
+    const seen = [];
+    const groups = await client.streams(loadedAddons.concat([torrentio, broken]), "movie", "tt1",
+        (g, total) => seen.push(g.addon + "/" + total));
+    assert.deepEqual(plain(seen.sort()), ["B/2", "T/2"], "chaque addon signale des sa reponse");
     assert.equal(groups.length, 2, "Cinemeta et OpenSubtitles n'ont pas de flux");
     assert.equal(groups[0].items.length, 1);
     assert.ok(groups[1].error);
@@ -179,4 +182,11 @@ test("sous-titres VTT", () => {
     assert.equal(vtt.textAt(cues, 13000), "Deuxieme\nligne");
     assert.equal(playback.subtitlesVttUrl(SETTINGS, "http://x/a.srt"),
         "http://pc:11470/subtitles.vtt?from=http%3A%2F%2Fx%2Fa.srt");
+});
+
+test("addon local de Stremio Desktop redirige vers le PC", () => {
+    assert.equal(addons.localToServer("http://127.0.0.1:11470/local-addon/manifest.json", "http://pc:11470"),
+        "http://pc:11470/local-addon/manifest.json");
+    assert.equal(addons.localToServer("https://v3-cinemeta.strem.io/manifest.json", "http://pc:11470"),
+        "https://v3-cinemeta.strem.io/manifest.json");
 });

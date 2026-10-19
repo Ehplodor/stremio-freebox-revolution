@@ -26,4 +26,6 @@ const DEV_ADDONS = [
 // Ouvre la fiche indiquee, lance son premier flux, puis revient a l'accueil.
 // account: true ouvre d'abord l'ecran Compte quelques secondes (code de liaison).
 // linkOnly: true ouvre seulement l'ecran Compte (le code s'affiche aussi dans la console du PC).
-const AUTOTEST = { linkOnly: true };
+// noPlay: true s'arrete a la liste des flux (aucune lecture, donc rien de debloque chez le debrideur).
+// Exemple : { type: "movie", id: "tt0241527", noPlay: true }
+const AUTOTEST = null;

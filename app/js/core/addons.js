@@ -137,17 +137,23 @@ function createClient(fetchJson) {
     }
 
     // Agrege une ressource liste (stream, subtitles) depuis tous les addons concernes.
-    function collect(addons, resource, key, type, id, extra) {
+    // onGroup(group) est appele des qu'un addon repond, pour afficher sans attendre les plus lents.
+    function collect(addons, resource, key, type, id, extra, onGroup) {
         const candidates = addons.filter(a => supports(a.manifest, resource, type, id));
         return Promise.all(candidates.map(a =>
             fetchJson(resourceUrl(a.transportUrl, resource, type, id, extra))
-                .then(r => ({ addon: a.manifest.name, transportUrl: a.transportUrl, items: r[key] || [] }),
+                .then(r => ({ addon: a.manifest.name, transportUrl: a.transportUrl, items: (r && r[key]) || [] }),
                       err => ({ addon: a.manifest.name, transportUrl: a.transportUrl, items: [], error: String(err) }))
+                .then(group => {
+                    if (onGroup)
+                        onGroup(group, candidates.length);
+                    return group;
+                })
         ));
     }
 
-    function streams(addons, type, id) {
-        return collect(addons, "stream", "streams", type, id);
+    function streams(addons, type, id, onGroup) {
+        return collect(addons, "stream", "streams", type, id, undefined, onGroup);
     }
 
     function subtitles(addons, type, id, extra) {
@@ -191,4 +197,9 @@ function posterUrl(url) {
 // Repli si l'affiche n'a pas pu etre decodee.
 function posterFallback(url, companion) {
     return companion && url ? companion + "/image?url=" + encodeURIComponent(url) : "";
+}
+
+// Stremio Desktop declare son addon local sur 127.0.0.1:11470 : depuis le Player, c'est le PC.
+function localToServer(transportUrl, server) {
+    return transportUrl.replace(/^https?:\/\/(127\.0\.0\.1|localhost):11470/, server);
 }

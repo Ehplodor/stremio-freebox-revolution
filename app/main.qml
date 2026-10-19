@@ -35,7 +35,8 @@ Application {
                     continue: Account.continueWatching(r[1]).map(Account.toMeta),
                     library: Account.library(r[1]).map(Account.toMeta)
                 };
-                return r[0].map(d => ({ transportUrl: d.transportUrl, manifest: d.manifest }));
+                return r[0].map(d => ({ transportUrl: Addons.localToServer(d.transportUrl, Config.SETTINGS.server),
+                                        manifest: d.manifest }));
             }).catch(e => {
                 log("compte inutilisable (" + e + "), addons par defaut");
                 if (/Session does not exist/.test(String(e))) {
@@ -160,18 +161,28 @@ Application {
         current.videoId = videoId;
         details.streams = [];
         details.streamsStatus = "chargement";
-        client.streams(addons, type, videoId).then(groups => {
-            const items = [];
-            groups.forEach(g => {
-                if (g.error)
-                    log("flux " + g.addon + " en echec : " + g.error);
-                g.items.forEach(s => items.push({ addon: g.addon, stream: s }));
-            });
-            details.streams = items;
-            details.streamsStatus = items.length ? items.length + " flux" : "aucun flux (installer un addon de flux)";
+        const request = {};                  // ignore les reponses d'un chargement precedent
+        current.streamsRequest = request;
+        let answered = 0;
+        let items = [];
+        client.streams(addons, type, videoId, (g, total) => {
+            if (current.streamsRequest !== request)
+                return;
+            answered++;
+            log("flux " + g.addon + " : " + (g.error ? "echec (" + g.error + ")" : g.items.length));
+            if (g.items.length) {
+                const hadNone = items.length === 0;
+                items = items.concat(g.items.map(s => ({ addon: g.addon, stream: s })));
+                details.streams = items;
+                if (hadNone)
+                    details.focusStreams();
+            }
+            details.streamsStatus = items.length + " flux" + (answered < total ? " (" + answered + "/" + total + " addons)" : "")
+                + (answered === total && !items.length ? " - aucun flux trouve" : "");
+        }).then(() => {
+            if (current.streamsRequest !== request)
+                return;
             log("flux pour " + videoId + " : " + items.length);
-            if (items.length)
-                details.focusStreams();
             autotest.streamsLoaded(items);
         }).catch(e => log("flux en echec : " + e));
     }
@@ -184,7 +195,8 @@ Application {
     }
 
     function play(item) {
-        log("choix du flux " + item.addon + " : " + JSON.stringify(item.stream).slice(0, 200));
+        log("choix du flux " + item.addon + " : " + (item.stream.name || "") + " " + (item.stream.title || "").split("
+")[0]);
         Playback.plan(item.stream, Config.SETTINGS, transport, seriesInfo()).then(p => {
             if (p.kind === "external") {
                 log("ouverture externe " + p.external);
@@ -196,7 +208,7 @@ Application {
                 return;
             }
             const probe = p.probe ? p.probe.streams.map(s => s.track + ":" + s.codec).join(" ") : "probe indisponible";
-            log((p.transcoded ? "transcodage" : "lecture directe") + " (" + probe + ") -> " + p.url);
+            log((p.transcoded ? "transcodage" : "lecture directe") + " (" + probe + ") via " + p.url.split("?")[0]);
             const title = current.meta ? current.meta.name : "";
             playerLoader.setSource("qml/PlayerPage.qml", { title: title, source: p.url });
             screen = "player";
@@ -393,8 +405,8 @@ Application {
         function streamsLoaded(items) {
             if (!running || stepTimer.step !== "wait-streams")
                 return;
-            if (!items.length) {
-                app.log("autotest : aucun flux, arret");
+            if (!items.length || Config.AUTOTEST.noPlay) {
+                app.log("autotest : " + items.length + " flux, arret sans lecture");
                 running = false;
                 return;
             }
