@@ -195,8 +195,7 @@ Application {
     }
 
     function play(item) {
-        log("choix du flux " + item.addon + " : " + (item.stream.name || "") + " " + (item.stream.title || "").split("
-")[0]);
+        log("choix du flux " + item.addon + " : " + (item.stream.name || "") + " " + (item.stream.title || "").split("\n")[0]);
         Playback.plan(item.stream, Config.SETTINGS, transport, seriesInfo()).then(p => {
             if (p.kind === "external") {
                 log("ouverture externe " + p.external);
@@ -209,32 +208,85 @@ Application {
             }
             const probe = p.probe ? p.probe.streams.map(s => s.track + ":" + s.codec).join(" ") : "probe indisponible";
             log((p.transcoded ? "transcodage" : "lecture directe") + " (" + probe + ") via " + p.url.split("?")[0]);
-            const title = current.meta ? current.meta.name : "";
-            playerLoader.setSource("qml/PlayerPage.qml", { title: title, source: p.url });
+            const audio = Playback.audioTracks(p.probe);
+            current.playback = p;
+            pendingSubtitles = null;
+            playerLoader.setSource("qml/PlayerPage.qml", {
+                title: current.meta ? current.meta.name : "",
+                source: p.url,
+                audioTracks: audio,
+                audioSwitchable: p.transcoded && audio.length > 1,
+                subtitleTracks: [{ label: "Desactives", kind: "off" }]
+            });
             screen = "player";
             playerLoader.forceActiveFocus();
-            loadSubtitles(item.stream);
+            loadSubtitles(item.stream, p, audio);
         }).catch(e => log("preparation de la lecture en echec : " + e));
     }
 
-    // Sous-titres : ceux du flux, puis ceux des addons ; francais en priorite.
-    function loadSubtitles(stream) {
-        const own = (stream.subtitles || []).map(s => ({ addon: "flux", sub: s }));
+    // Piste audio choisie dans le lecteur : on recharge le flux HLS avec cette seule piste.
+    function chooseAudio(index) {
+        const p = current.playback;
+        const track = playerLoader.item.audioTracks[index];
+        log("piste audio : " + track.label);
+        playerLoader.item.audioIndex = index;
+        playerLoader.item.reload(Playback.withAudio(p.url, track.id));
+    }
+
+    // Sous-titres proposes : integres a la video, puis ceux du flux et des addons.
+    function loadSubtitles(stream, p, audio) {
+        const options = [{ label: "Desactives", kind: "off" }];
+        Playback.embeddedSubtitles(p.probe).forEach(s => options.push({
+            label: s.label + " (integre)", kind: "embedded", language: s.language,
+            url: Playback.embeddedSubtitleUrl(Config.SETTINGS, p.mediaUrl, p.transcoded ? p.url : "", s)
+        }));
+        const external = (stream.subtitles || []).map(s => ({ addon: "flux", sub: s }));
+        log("sous-titres integres : " + (options.length - 1) + ", recherche dans les addons");
         client.subtitles(addons, current.type, current.videoId).then(groups => {
-            let all = own;
-            groups.forEach(g => g.items.forEach(s => all.push({ addon: g.addon, sub: s })));
-            log(all.length + " sous-titres disponibles");
-            const pick = all.find(x => /^(fre|fra|fr)$/.test(x.sub.lang)) || all[0];
-            if (!pick)
+            log("sous-titres des addons : " + groups.map(g => g.addon + "=" + (g.error ? "echec" : g.items.length)).join(", "));
+            groups.forEach(g => g.items.forEach(s => external.push({ addon: g.addon, sub: s })));
+            // Francais puis anglais d'abord, 40 au plus : la liste des addons peut etre tres longue.
+            const rank = x => Playback.isFrench(x.sub.lang) ? 0 : /^(eng|en)$/i.test(x.sub.lang || "") ? 1 : 2;
+            external.sort((a, b) => rank(a) - rank(b)).slice(0, 40).forEach(x => options.push({
+                label: (Playback.languageName(x.sub.lang) || "?") + " - " + x.addon, kind: "external",
+                language: x.sub.lang, url: Playback.subtitlesVttUrl(Config.SETTINGS, x.sub.url)
+            }));
+        }).catch(e => log("sous-titres des addons en echec : " + e)).then(() => {
+            log(options.length - 1 + " sous-titres proposes");
+            // Le lecteur se charge de facon asynchrone : on lui passe la liste des qu'il est pret.
+            pendingSubtitles = { options: options, first: Playback.defaultSubtitle(options, audio) };
+            applySubtitles();
+        }).catch(e => log("sous-titres : erreur " + e));
+    }
+
+    property var pendingSubtitles: null
+
+    function applySubtitles() {
+        const page = playerLoader.item;
+        if (!page || !pendingSubtitles)
+            return;
+        const pending = pendingSubtitles;
+        pendingSubtitles = null;
+        page.subtitleTracks = pending.options;
+        if (pending.first > 0)
+            chooseSubtitle(pending.first);
+    }
+
+    function chooseSubtitle(index) {
+        const page = playerLoader.item;
+        const option = page.subtitleTracks[index];
+        page.subtitleIndex = index;
+        page.cues = [];
+        if (option.kind === "off") {
+            log("sous-titres desactives");
+            return;
+        }
+        Http.fetchText(option.url).then(text => {
+            if (playerLoader.item !== page || page.subtitleIndex !== index)
                 return;
-            const url = Playback.subtitlesVttUrl(Config.SETTINGS, pick.sub.url);
-            Http.fetchText(url).then(text => {
-                const cues = Vtt.parse(text);
-                log("sous-titres " + pick.addon + " " + pick.sub.lang + " : " + cues.length + " lignes");
-                if (playerLoader.item)
-                    playerLoader.item.cues = cues;
-            }).catch(e => log("sous-titres en echec : " + e));
-        });
+            page.cues = Vtt.parse(text);
+            log("sous-titres " + option.label + " : " + page.cues.length + " lignes");
+        }).catch(e => log("sous-titres en echec : " + e));
     }
 
     function stopPlayer() {
@@ -367,6 +419,9 @@ Application {
             onLoaded: {
                 item.logMessage.connect(app.log);
                 item.finished.connect(app.stopPlayer);
+                item.audioChosen.connect(app.chooseAudio);
+                item.subtitleChosen.connect(app.chooseSubtitle);
+                app.applySubtitles();
             }
         }
 
@@ -410,8 +465,8 @@ Application {
                 running = false;
                 return;
             }
-            stepTimer.step = "stop";
-            stepTimer.interval = Config.AUTOTEST.playSeconds * 1000;
+            stepTimer.step = Config.AUTOTEST.tracks ? "audio" : "stop";
+            stepTimer.interval = Config.AUTOTEST.tracks ? 20000 : Config.AUTOTEST.playSeconds * 1000;
             app.play(items[0]);
             stepTimer.start();
         }
@@ -445,6 +500,23 @@ Application {
                 app.log("autotest : accueil " + home.count + " rangees, affiches chargees " + images + ", en echec " + failed);
                 step = "wait-streams";
                 app.openMeta(Config.AUTOTEST.type, Config.AUTOTEST.id);
+            } else if (step === "audio") {
+                const page = playerLoader.item;
+                app.log("autotest : pistes audio " + JSON.stringify(page.audioTracks.map(a => a.label))
+                        + ", sous-titres " + JSON.stringify(page.subtitleTracks.map(s => s.label)));
+                if (page.audioTracks.length > 1)
+                    app.chooseAudio(1);
+                step = "subtitle";
+                interval = 20000;
+                start();
+            } else if (step === "subtitle") {
+                const page = playerLoader.item;
+                const i = page.subtitleTracks.findIndex(s => s.kind === "embedded" && !Playback.isFrench(s.language));
+                if (i > 0)
+                    app.chooseSubtitle(i);
+                step = "stop";
+                interval = 20000;
+                start();
             } else if (step === "stop") {
                 app.log("autotest : arret de la lecture");
                 app.back();

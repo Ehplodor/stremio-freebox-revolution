@@ -89,6 +89,20 @@ réglage global (`transcodeMaxBitRate`). L'appli demande donc `maxWidth=1280` pa
   (`can't create path /var/lib/databases/...`). Le `Settings` de `fbx.application`
   (`App.settings`) fonctionne et persiste entre deux lancements (compteur 1 puis 2).
 
+## Pistes audio et sous-titres pendant la lecture
+
+- QtMultimedia 5.15 ne permet pas de choisir la piste audio, et le lecteur HLS du Player
+  prend la piste par défaut. Le service compagnon accepte `fbxAudio=N` sur le master.m3u8 et
+  n'y garde que la piste N ; l'appli recharge le flux et reprend à la même position.
+  Validé sur la box : passage FR → EN à 0:17, reprise à 0:17.
+- Sous-titres intégrés : le serveur Stremio ne fournit l'ASS que via `source/subtitle/N.ass`,
+  et le SRT seulement en segments VTT de 10 s. Le compagnon assemble un VTT complet
+  (`/subtitles/embedded.vtt`), en convertissant l'ASS. Validé : ASS anglais affiché à 0:37.
+- Menu dans le lecteur (Haut ou Menu) : pistes audio à gauche, sous-titres à droite
+  (désactivés, intégrés, puis ceux des addons, français et anglais d'abord).
+  Par défaut : sous-titres français seulement si la première piste audio n'est pas en français.
+- Premier test réel avec AllDebrid (Harry Potter, par Rod) : lecture et son OK.
+
 ## Conséquences pour le plan
 
 - Le risque « runtime ancien » disparaît : on peut écrire le mini-core en JavaScript moderne.

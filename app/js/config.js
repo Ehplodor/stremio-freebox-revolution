@@ -28,4 +28,6 @@ const DEV_ADDONS = [
 // linkOnly: true ouvre seulement l'ecran Compte (le code s'affiche aussi dans la console du PC).
 // noPlay: true s'arrete a la liste des flux (aucune lecture, donc rien de debloque chez le debrideur).
 // Exemple : { type: "movie", id: "tt0241527", noPlay: true }
+// tracks: true change de piste audio puis de sous-titres pendant la lecture.
+// Exemple : { type: "movie", id: "fbxtest-multi", tracks: true, playSeconds: 60 }
 const AUTOTEST = null;

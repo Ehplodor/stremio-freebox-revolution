@@ -190,3 +190,28 @@ test("addon local de Stremio Desktop redirige vers le PC", () => {
     assert.equal(addons.localToServer("https://v3-cinemeta.strem.io/manifest.json", "http://pc:11470"),
         "https://v3-cinemeta.strem.io/manifest.json");
 });
+
+test("pistes audio et sous-titres", () => {
+    const probe = { format: { name: "matroska,webm" }, streams: [
+        { id: 0, track: "video", codec: "h264" },
+        { id: 0, track: "audio", codec: "aac", channels: 1, title: "Francais 440 Hz", language: "fre" },
+        { id: 1, track: "audio", codec: "ac3", channels: 6, title: null, language: "eng" },
+        { id: 0, track: "subtitle", codec: "subrip", language: "fre" },
+        { id: 1, track: "subtitle", codec: "hdmv_pgs_subtitle", language: "eng" },
+        { id: 2, track: "subtitle", codec: "ass", language: null } ] };
+    const audio = playback.audioTracks(probe);
+    assert.deepEqual(plain(audio.map(a => a.label)), ["Francais - Francais 440 Hz (AAC 1 canaux)", "Anglais (AC3 6 canaux)"]);
+    const subs = playback.embeddedSubtitles(probe);
+    assert.deepEqual(plain(subs.map(s => s.id + ":" + s.label)), ["0:Francais", "2:Piste 2"], "PGS (image) ignore");
+
+    const master = "http://pc:11480/hlsv2/fbx1/master.m3u8?mediaURL=x&maxWidth=1280";
+    assert.equal(playback.withAudio(master, 1), master + "&fbxAudio=1");
+    assert.equal(playback.withAudio(master + "&fbxAudio=1", 0), master + "&fbxAudio=0");
+
+    assert.equal(playback.embeddedSubtitleUrl(SETTINGS, "x", master, subs[0]),
+        "http://pc:11480/subtitles/embedded.vtt?path=%2Fhlsv2%2Ffbx1%2Fmaster.m3u8%3FmediaURL%3Dx%26maxWidth%3D1280&id=0&codec=subrip");
+
+    const options = [{ kind: "off" }, { kind: "embedded", language: "eng" }, { kind: "external", language: "fre" }];
+    assert.equal(playback.defaultSubtitle(options, [{ language: "eng" }]), 2);
+    assert.equal(playback.defaultSubtitle(options, [{ language: "fre" }]), 0);
+});

@@ -178,3 +178,77 @@ function plan(stream, settings, transport, seriesInfo) {
 function subtitlesVttUrl(settings, url) {
     return settings.server + "/subtitles.vtt?" + query([["from", url]]);
 }
+
+// ----- Pistes audio et sous-titres -----
+
+const LANGUAGES = {
+    fre: "Francais", fra: "Francais", fr: "Francais", eng: "Anglais", en: "Anglais",
+    spa: "Espagnol", es: "Espagnol", ger: "Allemand", deu: "Allemand", de: "Allemand",
+    ita: "Italien", it: "Italien", por: "Portugais", pt: "Portugais", jpn: "Japonais", ja: "Japonais",
+    dut: "Neerlandais", nld: "Neerlandais", ara: "Arabe", rus: "Russe", chi: "Chinois", zho: "Chinois",
+    kor: "Coreen", pol: "Polonais", tur: "Turc", swe: "Suedois", dan: "Danois", nor: "Norvegien"
+};
+
+function languageName(code) {
+    if (!code)
+        return "";
+    return LANGUAGES[String(code).toLowerCase()] || code;
+}
+
+function isFrench(code) {
+    return /^(fre|fra|fr)$/i.test(code || "");
+}
+
+function trackLabel(s, index) {
+    const parts = [];
+    if (s.language)
+        parts.push(languageName(s.language));
+    if (s.title && s.title !== s.language)
+        parts.push(s.title);
+    if (!parts.length)
+        parts.push("Piste " + (index + 1));
+    const tech = [s.codec ? String(s.codec).toUpperCase() : "", s.channels ? s.channels + " canaux" : ""]
+        .filter(x => x).join(" ");
+    return parts.join(" - ") + (tech ? " (" + tech + ")" : "");
+}
+
+// Pistes audio du probe : [{ id, label, language }]
+function audioTracks(probe) {
+    if (!probe || !Array.isArray(probe.streams))
+        return [];
+    return probe.streams.filter(s => s.track === "audio")
+        .map((s, i) => ({ id: s.id, label: trackLabel(s, i), language: s.language || "" }));
+}
+
+// Sous-titres integres du probe : [{ id, codec, label, language }]
+function embeddedSubtitles(probe) {
+    if (!probe || !Array.isArray(probe.streams))
+        return [];
+    return probe.streams.filter(s => s.track === "subtitle" && /^(subrip|srt|ass|ssa|webvtt|mov_text|text)$/.test(s.codec))
+        .map((s, i) => ({ id: s.id, codec: s.codec, label: trackLabel({ language: s.language, title: s.title }, i),
+                          language: s.language || "" }));
+}
+
+// Master HLS avec une seule piste audio (filtre du service compagnon).
+function withAudio(masterUrl, audioId) {
+    const clean = masterUrl.replace(/&fbxAudio=[^&]*/, "");
+    return audioId === null || audioId === undefined ? clean : clean + "&fbxAudio=" + encodeURIComponent(audioId);
+}
+
+// VTT complet d'une piste integree, assemble par le service compagnon.
+// masterUrl : URL HLS en cours (transcodage) ; sinon on en fabrique une pour le serveur.
+function embeddedSubtitleUrl(settings, mediaUrl, masterUrl, sub) {
+    const master = masterUrl || hlsUrl(settings, mediaUrl, false);
+    const path = master.replace(/^https?:\/\/[^\/]+/, "");
+    return (settings.companion || settings.server) + "/subtitles/embedded.vtt?" + query([
+        ["path", path], ["id", sub.id], ["codec", sub.codec]
+    ]);
+}
+
+// Choix des sous-titres au demarrage : francais si la premiere piste audio n'est pas en francais.
+function defaultSubtitle(options, audio) {
+    if (audio.length && isFrench(audio[0].language))
+        return 0;
+    const i = options.findIndex(o => o.kind !== "off" && isFrench(o.language));
+    return i === -1 ? 0 : i;
+}

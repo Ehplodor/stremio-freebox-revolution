@@ -28,6 +28,8 @@ ITEMS = [
     ("mkv-dts", "MKV H.264 + DTS 5.1", "h264_dts.mkv", "Lecture directe attendue (DTS)."),
     ("hevc-srt", "MKV HEVC + AC3 + sous-titres", "hevc_ac3_srt.mkv",
      "Transcodage H.264/AAC par le PC, sous-titres SRT externes affiches par l'appli."),
+    ("multi", "MKV 2 pistes audio + 2 sous-titres", "multi.mkv",
+     "Audio FR (440 Hz) et EN (880 Hz), sous-titres integres SRT FR et ASS EN."),
 ]
 
 

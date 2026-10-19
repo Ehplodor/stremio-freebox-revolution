@@ -19,4 +19,14 @@ printf '1\n00:00:01,000 --> 00:00:10,000\nSous-titre de test SRT numero 1\n\n2\n
 "$F" $Q $V $SINE -filter_complex "$PAN" -map 0:v -map "[a]" $X264 -c:a dca -strict -2 -b:a 768k h264_dts.mkv
 "$F" $Q $V $SINE -i test.srt -filter_complex "$PAN" -map 0:v -map "[a]" -map 2:s \
     -c:v libx265 -preset fast -x265-params log-level=error -pix_fmt yuv420p -c:a ac3 -b:a 384k -c:s srt hevc_ac3_srt.mkv
+# 2 pistes audio (FR 440 Hz, EN 880 Hz) + sous-titres integres SRT FR et ASS EN
+printf '[Script Info]
+ScriptType: v4.00+
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:02.00,0:00:12.00,Default,,0,0,0,,{\i1}English ASS line one{\i0}
+Dialogue: 0,0:00:15.00,0:00:40.00,Default,,0,0,0,,English ASS\Nline two
+' > test_en.ass
+"$F" $Q $V $SINE -f lavfi -i sine=frequency=880:duration=60 -i test.srt -i test_en.ass     -map 0:v -map 1:a -map 2:a -map 3:s -map 4:s $X264 -c:a:0 aac -c:a:1 ac3 -c:s:0 srt -c:s:1 ass     -metadata:s:a:0 language=fre -metadata:s:a:0 title="Francais 440 Hz"     -metadata:s:a:1 language=eng -metadata:s:a:1 title="English 880 Hz"     -metadata:s:s:0 language=fre -metadata:s:s:1 language=eng multi.mkv
 ls -l
