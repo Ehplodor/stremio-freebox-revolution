@@ -15,16 +15,17 @@ function startTimer(ms, fn) {
     return timer;
 }
 
-function request(method, url, body, asText) {
+function request(method, url, body, asText, timeoutMs) {
+    const timeout = timeoutMs || TIMEOUT_MS;
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         let finished = false;
-        const timer = startTimer(TIMEOUT_MS, () => {
+        const timer = startTimer(timeout, () => {
             if (finished)
                 return;
             finished = true;
             xhr.abort();
-            reject(new Error("pas de reponse apres " + TIMEOUT_MS / 1000 + " s"));
+            reject(new Error("pas de reponse apres " + timeout / 1000 + " s"));
         });
         xhr.onreadystatechange = () => {
             if (xhr.readyState !== XMLHttpRequest.DONE || finished)
@@ -61,6 +62,7 @@ function postJson(url, body) {
     return request("POST", url, body);
 }
 
-function fetchText(url) {
-    return request("GET", url, undefined, true);
+// timeoutMs : delai propre (les sous-titres integres d'un film entier prennent plus de 25 s).
+function fetchText(url, timeoutMs) {
+    return request("GET", url, undefined, true, timeoutMs);
 }

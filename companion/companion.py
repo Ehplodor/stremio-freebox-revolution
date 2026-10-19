@@ -23,7 +23,9 @@ Sans dependance obligatoire (Python 3.8+, Pillow en option). Exemple :
 import argparse
 import http.server
 import io
+import ipaddress
 import re
+import socket
 import socketserver
 import sys
 import urllib.error
@@ -185,6 +187,12 @@ def relay(handler, stremio, path, method="GET"):
     for k in ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges"):
         if rsp.headers.get(k):
             handler.send_header(k, rsp.headers[k])
+    if not rsp.headers.get("Content-Length") and method != "HEAD":
+        # Reponse sans taille (envoi par morceaux cote Stremio, que urllib a deja decode) :
+        # en HTTP/1.1 le client ne saurait pas ou elle finit et attendrait sans fin.
+        # On ferme la connexion a la fin pour la delimiter.
+        handler.send_header("Connection", "close")
+        handler.close_connection = True
     handler.end_headers()
     try:
         while True:
@@ -198,12 +206,30 @@ def relay(handler, stremio, path, method="GET"):
         rsp.close()
 
 
+def is_public_host(host):
+    """Vrai si toutes les adresses du nom sont publiques (ni boucle locale ni reseau prive)."""
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except (socket.gaierror, UnicodeError):
+        return False
+    for info in infos:
+        addr = ipaddress.ip_address(info[4][0].split("%", 1)[0])
+        if not addr.is_global:
+            return False
+    return True
+
+
 def image(handler):
     """/image?url=... : WebP -> JPEG pour le Player."""
     qs = urllib.parse.parse_qs(urllib.parse.urlsplit(handler.path).query)
     url = (qs.get("url") or [""])[0]
     if not url.startswith(("http://", "https://")):
         handler.send_error(400, "url manquante")
+        return
+    # Les affiches viennent d'Internet. Refuser le reste evite que n'importe quel appareil
+    # du reseau se serve du compagnon pour lire les services locaux du PC (127.0.0.1...).
+    if not is_public_host(urllib.parse.urlsplit(url).hostname or ""):
+        handler.send_error(403, "adresse non publique refusee")
         return
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "image/jpeg,image/png,*/*"})
@@ -215,7 +241,11 @@ def image(handler):
         return
     if data[:4] == b"RIFF" and data[8:12] == b"WEBP" and Image is not None:
         out = io.BytesIO()
-        Image.open(io.BytesIO(data)).convert("RGB").save(out, "JPEG", quality=85)
+        try:
+            Image.open(io.BytesIO(data)).convert("RGB").save(out, "JPEG", quality=85)
+        except Exception as e:  # noqa: BLE001 - image corrompue : 502 au lieu d'une connexion coupee
+            handler.send_error(502, "image illisible : %s" % e)
+            return
         data, ctype = out.getvalue(), "image/jpeg"
     handler.send_response(200)
     handler.send_header("Content-Type", ctype)

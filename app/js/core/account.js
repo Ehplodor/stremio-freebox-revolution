@@ -26,11 +26,16 @@ function continueWatching(items) {
 function library(items) {
     return items
         .filter(i => i.type !== "other" && !i.removed && !i.temp)
-        .sort((a, b) => Date.parse(b._mtime || 0) - Date.parse(a._mtime || 0));
+        .sort((a, b) => mtime(b) - mtime(a));
+}
+
+// Date de modification en ms ; 0 si absente ou illisible (un NaN fausserait le tri).
+function mtime(item) {
+    return Date.parse(item._mtime || "") || 0;
 }
 
 function lastWatched(item) {
-    return Date.parse((item.state && item.state.lastWatched) || item._mtime || 0) || 0;
+    return Date.parse((item.state && item.state.lastWatched) || "") || mtime(item);
 }
 
 function progress(item) {

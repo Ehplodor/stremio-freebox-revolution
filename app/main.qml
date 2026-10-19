@@ -22,6 +22,8 @@ Application {
     property var client: Addons.createClient(Http.fetchJson)
     readonly property var transport: ({ fetchJson: Http.fetchJson, postJson: Http.postJson })
     property var account: Account.createAccount(transport)
+    // Catalogues deja charges : les rangees de l'accueil sont detruites et recreees en defilant.
+    property var catalogCache: ({})
 
     function log(msg) {
         console.log("[app] " + msg);
@@ -62,6 +64,7 @@ Application {
             const rows = Addons.homeCatalogs(addons);
             log(addons.length + " addons, " + rows.length + " rangees : "
                 + rows.map(r => r.addonName + "/" + r.name + "(" + r.type + ")").join(", "));
+            catalogCache = {};
             rowsModel.clear();
             if ((localRows.continue || []).length)
                 rowsModel.append({ kind: "continue", transportUrl: "", addonName: "Compte", type: "", cid: "", name: "Continuer a regarder" });
@@ -145,7 +148,10 @@ Application {
         details.streamsStatus = "";
         screen = "details";
         details.forceActiveFocus();
+        const request = current;              // ignore la reponse si une autre fiche a ete ouverte
         client.meta(addons, type, id).then(meta => {
+            if (current !== request)
+                return;
             current.meta = meta;
             details.meta = meta;
             const episodes = [];
@@ -156,7 +162,10 @@ Application {
             } else {
                 loadStreams(type, id);
             }
-        }).catch(e => log("fiche en echec : " + e));
+        }).catch(e => {
+            if (current === request)
+                log("fiche en echec : " + e);
+        });
     }
 
     function loadStreams(type, videoId) {
@@ -195,7 +204,7 @@ Application {
     function refreshStreams() {
         const raw = current.rawStreams || [];
         const r = Sorting.sortStreams(raw, sortPrefs);
-        details.streams = r.visible;
+        details.setStreams(r.visible);
         details.streamsStatus = r.visible.length + " flux" + (r.hidden ? ", " + r.hidden + " masques" : "")
             + (current.streamsProgress || "")
             + (!current.streamsProgress && !raw.length ? " - aucun flux trouve" : "");
@@ -307,7 +316,8 @@ Application {
             log("sous-titres desactives");
             return;
         }
-        Http.fetchText(option.url).then(text => {
+        // Sous-titres integres : le compagnon lit toute la piste, ce qui peut prendre plusieurs minutes.
+        Http.fetchText(option.url, option.kind === "embedded" ? 300000 : 0).then(text => {
             if (playerLoader.item !== page || page.subtitleIndex !== index)
                 return;
             page.cues = Vtt.parse(text);
@@ -408,8 +418,15 @@ Application {
                         return;
                     }
                     const ref = { transportUrl: model.transportUrl, type: model.type, id: model.cid, name: model.name };
+                    const key = ref.transportUrl + "|" + ref.type + "|" + ref.id;
+                    if (app.catalogCache[key]) {
+                        row.metas = app.catalogCache[key];
+                        row.status = row.metas.length ? "" : "vide";
+                        return;
+                    }
                     row.status = "chargement";
                     app.client.catalog(ref).then(metas => {
+                        app.catalogCache[key] = metas;
                         row.metas = metas;
                         row.status = metas.length ? "" : "vide";
                         app.log("rangee " + ref.name + " (" + ref.type + ") : " + metas.length + " titres");

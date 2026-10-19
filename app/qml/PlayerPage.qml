@@ -64,6 +64,10 @@ FocusScope {
         id: player
         autoPlay: true
         source: page.source
+        // Position mise a jour toutes les 200 ms (1 s par defaut) : sinon les sous-titres
+        // apparaissent et disparaissent jusqu'a une seconde en retard. Affecte au demarrage
+        // seulement si la propriete existe, pour ne pas casser le chargement de la page.
+        Component.onCompleted: if ("notifyInterval" in player) player.notifyInterval = 200
         onStatusChanged: {
             page.logMessage("lecteur : " + page.statusName(status));
             if (status === MediaPlayer.EndOfMedia)
@@ -256,7 +260,9 @@ FocusScope {
             break;
         case Qt.Key_Right:
         case Qt.Key_MediaNext:
-            player.seek(Math.min(player.position + 30000, player.duration));
+            // Duree encore inconnue (0) pendant le chargement : ne pas revenir au debut.
+            if (player.duration > 0)
+                player.seek(Math.min(player.position + 30000, player.duration));
             break;
         case Qt.Key_Left:
         case Qt.Key_MediaPrevious:

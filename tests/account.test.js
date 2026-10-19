@@ -85,3 +85,13 @@ test("continuer a regarder et bibliotheque", () => {
     assert.equal(m.videoId, "tt9:1:2");
     assert.equal(m.progress, 0.1);
 });
+
+test("bibliotheque : une date absente ou illisible ne casse pas le tri", () => {
+    const items = [
+        item("a", { _mtime: "2026-10-03T00:00:00.000Z" }),
+        item("b", { _mtime: undefined }),
+        item("c", { _mtime: "pas une date" }),
+        item("d", { _mtime: "2026-10-05T00:00:00.000Z" })
+    ];
+    assert.deepEqual(plain(account.library(items).map(i => i._id)), ["d", "a", "b", "c"]);
+});

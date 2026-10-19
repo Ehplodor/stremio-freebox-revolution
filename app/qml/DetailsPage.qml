@@ -18,6 +18,17 @@ FocusScope {
         streamList.forceActiveFocus();
     }
 
+    // Nouvelle liste (un addon de plus a repondu, ou tri modifie) : si l'utilisateur est descendu
+    // dans la liste, la selection reste sur le meme flux au lieu de revenir en tete, pour que OK
+    // lance bien celui qui etait choisi. Tant qu'il est en tete, il y reste (meilleur flux).
+    function setStreams(list) {
+        const selected = streamList.currentIndex > 0 ? streams[streamList.currentIndex] : null;
+        streams = list;
+        const i = selected ? list.findIndex(x => x.stream === selected.stream) : -1;
+        streamList.currentIndex = i === -1 ? 0 : i;
+        streamList.positionViewAtIndex(streamList.currentIndex, ListView.Contain);
+    }
+
     Rectangle {
         anchors.fill: parent
         color: "#0e1318"
