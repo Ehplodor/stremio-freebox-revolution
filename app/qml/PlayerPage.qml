@@ -37,6 +37,23 @@ FocusScope {
             + (subDelay > 0 ? "  ·  plus tard" : "  ·  plus tot");
     }
     signal nextRequested()
+    // Prechargement par le PC (pilote par AppRoot) : ecran d'attente et partie prechargee.
+    property bool bufferVisible: false
+    property string bufferTitle: ""
+    property int bufferPercent: 0
+    property string bufferEta: ""
+    property string bufferDetail: ""
+    property real bufferedFrom: 0        // debut de la partie prechargee (0..1)
+    property real bufferedTo: 0          // fin de la partie prechargee (0..1)
+    signal skipBuffering()
+
+    function pausePlayer() {
+        player.pause();
+    }
+
+    function resumePlayer() {
+        player.play();
+    }
     readonly property int positionMs: player.position
     readonly property int durationMs: player.duration
     signal finished()
@@ -232,6 +249,15 @@ FocusScope {
                     radius: 3
                     color: Qt.rgba(1, 1, 1, 0.22)
                     Rectangle {
+                        // Partie deja prechargee par le PC
+                        visible: page.bufferedTo > 0
+                        x: parent.width * page.bufferedFrom
+                        width: parent.width * Math.max(0, page.bufferedTo - page.bufferedFrom)
+                        height: parent.height
+                        radius: 3
+                        color: Qt.rgba(1, 1, 1, 0.38)
+                    }
+                    Rectangle {
                         height: parent.height
                         radius: 3
                         width: player.duration > 0 ? parent.width * Math.min(1, player.position / player.duration) : 0
@@ -281,8 +307,9 @@ FocusScope {
         height: 72
         radius: 36
         color: Qt.rgba(0, 0, 0, 0.55)
-        visible: player.status === MediaPlayer.Loading || player.status === MediaPlayer.Stalled
-                 || (player.status === MediaPlayer.Buffering && player.position === 0)
+        visible: !page.bufferVisible && page.source !== ""
+                 && (player.status === MediaPlayer.Loading || player.status === MediaPlayer.Stalled
+                     || (player.status === MediaPlayer.Buffering && player.position === 0))
         Rectangle {
             anchors.centerIn: parent
             width: 40
@@ -300,6 +327,59 @@ FocusScope {
                 y: -4
             }
             RotationAnimation on rotation { from: 0; to: 360; duration: 900; loops: Animation.Infinite; running: parent.visible }
+        }
+    }
+
+    // Prechargement : carte d'attente (avant la lecture, ou pause automatique si l'avance s'epuise)
+    Rectangle {
+        id: bufferCard
+        visible: page.bufferVisible
+        anchors.centerIn: parent
+        width: 620
+        height: bufferColumn.implicitHeight + 56
+        radius: T.radius + 4
+        color: Qt.rgba(0.07, 0.09, 0.13, 0.94)
+        border.color: T.line
+        Column {
+            id: bufferColumn
+            anchors { left: parent.left; right: parent.right; top: parent.top; margins: 28 }
+            spacing: 14
+            Text {
+                text: page.bufferTitle
+                color: T.text
+                font.pixelSize: T.fontHeading
+                font.bold: true
+            }
+            Rectangle {
+                width: parent.width
+                height: 10
+                radius: 5
+                color: Qt.rgba(1, 1, 1, 0.15)
+                Rectangle {
+                    width: parent.width * page.bufferPercent / 100
+                    height: parent.height
+                    radius: 5
+                    color: T.accent
+                    Behavior on width { NumberAnimation { duration: 400 } }
+                }
+            }
+            Text {
+                text: page.bufferPercent + " %" + (page.bufferEta ? "   ·   lecture dans " + page.bufferEta : "")
+                color: T.text
+                font.pixelSize: T.fontBody
+            }
+            Text {
+                width: parent.width
+                text: page.bufferDetail
+                color: T.textMuted
+                font.pixelSize: T.fontSmall
+                wrapMode: Text.Wrap
+            }
+            Text {
+                text: "OK : lancer maintenant   ·   Retour : quitter"
+                color: T.accent
+                font.pixelSize: T.fontSmall
+            }
         }
     }
 
@@ -540,6 +620,10 @@ FocusScope {
         switch (event.key) {
         case Qt.Key_Return:
         case Qt.Key_Enter:
+            if (page.bufferVisible) {
+                page.skipBuffering();
+                break;
+            }
             if (nextCard.visible) {
                 page.nextRequested();
                 break;

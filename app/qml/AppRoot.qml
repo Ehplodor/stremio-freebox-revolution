@@ -11,6 +11,7 @@ import "../js/core/account.js" as Account
 import "../js/core/sorting.js" as Sorting
 import "../js/core/resume.js" as Resume
 import "../js/core/subsegments.js" as SubSeg
+import "../js/core/buffer.js" as Buffer
 
 // Racine de l'appli, chargee depuis l'agent du PC (par le lanceur du Player ou par main.qml).
 // Ecrans : accueil, recherche, reglages (barre du haut), fiche, lecteur, compte, tri.
@@ -237,6 +238,7 @@ Item {
     }
     property bool autotestDone: false
     property bool linksMeasured: false
+    property bool prefetchWaiting: false   // ecran d'attente du prechargement affiche
     property bool loadCheck: false
 
     // Catalogue d'une rangee, une seule requete par session d'accueil.
@@ -467,17 +469,67 @@ Item {
             log((p.transcoded ? "transcodage par " + (playCfg.profile || "le processeur") : "lecture directe") + " (" + probe + ")");
             const audio = Playback.audioTracks(p.probe);
             const audioIndex = p.transcoded ? Resume.pickAudio(audio, settings.audioLang) : 0;
-            const url = audioIndex > 0 ? Playback.withAudio(p.url, audio[audioIndex].id) : p.url;
+            const durationMs = p.probe && p.probe.format && p.probe.format.duration > 0 ? p.probe.format.duration * 1000
+                : Sorting.runtimeMinutes(current.meta ? current.meta.runtime : "") * 60000;
+            const startAtMs = Resume.resumeAt(positions, accountId, current.videoId);
+            preparePrefetch(p, durationMs, startAtMs, playCfg, forceTranscoding).then(pf => {
+                if (current !== opened || screen !== "details")
+                    return;
+                startPlayer(item, p, pf, audio, audioIndex);
+            });
+        }).catch(e => {
+            playToken = null;
+            log("preparation de la lecture en echec : " + e);
+            if (current === opened)
+                tryNextSource("lecture impossible : " + e.message);
+        });
+    }
+
+    // Prechargement par le PC : la source est telechargee par l'agent, Stremio ou la box la lisent
+    // depuis son cache. Renvoie { url, mediaUrl, prefetch } (prefetch null si non utilise).
+    function preparePrefetch(p, durationMs, startAtMs, playCfg, forceTranscoding) {
+        const plain = { url: p.url, mediaUrl: p.mediaUrl, prefetch: null };
+        const media = String(p.mediaUrl || "");
+        // Sources du PC lui-meme (addon de test) ou du serveur Stremio (torrents, deja en cache) : inutile.
+        if (!settings.prefetch || !/^https?:[/][/]/.test(media) || Config.hostFromUrl(media) === pcHost)
+            return Promise.resolve(plain);
+        const fraction = durationMs > 0 && startAtMs > 0 ? startAtMs / durationMs : 0;
+        return Http.request("GET", cfg.agent + "/fbx/prefetch?start=" + fraction.toFixed(4) + "&url="
+                            + encodeURIComponent(media), undefined, false, 30000).then(st => {
+            const cached = cfg.agent + st.fileUrl;
+            log("prechargement par le PC : " + Math.round(st.total / 1048576) + " Mo");
+            return {
+                url: p.transcoded ? Playback.hlsUrl(playCfg, cached, !!forceTranscoding) : cached,
+                mediaUrl: cached,
+                prefetch: { id: st.id, durationMs: durationMs, startAtMs: startAtMs, mode: "start",
+                            targetS: 0, started: Date.now(), skipUntil: 0 }
+            };
+        }).catch(e => {
+            log("prechargement impossible (" + e.message + "), lecture sans");
+            return plain;
+        });
+    }
+
+    function startPlayer(item, p, pf, audio, audioIndex) {
+            const url = audioIndex > 0 ? Playback.withAudio(pf.url, audio[audioIndex].id) : pf.url;
+            p.url = pf.url;
+            p.mediaUrl = pf.mediaUrl;
             current.playback = p;
             current.playingItem = item;
             pendingSubtitles = null;
             const next = current.type === "series" ? Resume.nextEpisode(current.meta, current.videoId) : null;
             const startAt = Resume.resumeAt(positions, accountId, current.videoId);
+            current.prefetch = pf.prefetch;
+            prefetchWaiting = !!pf.prefetch;
             playerLoader.setSource("PlayerPage.qml", {
+                bufferVisible: !!pf.prefetch,
+                bufferTitle: "Prechargement…",
+                bufferDetail: "Le PC telecharge la video en avance pour une lecture sans coupure.",
                 title: current.meta ? current.meta.name : "",
                 subtitleLine: [details.selectedTitle, (item.badges || "").split(" · ").slice(0, 3).join(" · "),
                                p.transcoded ? "converti par le PC" : "lecture directe"].filter(x => x).join("   ·   "),
-                source: url,
+                // Avec prechargement, la source est donnee au lecteur quand l'avance est suffisante.
+                source: pf.prefetch ? "" : url,
                 startAt: startAt,
                 audioTracks: audio,
                 audioIndex: audioIndex,
@@ -488,17 +540,121 @@ Item {
                 autoNext: settings.autoNext
             });
             current.nextVideo = next;
+            current.nextPrep = null;
+            current.playUrl = url;
             screen = "player";
             playerLoader.forceActiveFocus();
             if (startAt > 0)
                 toast("Reprise a " + fmtTime(startAt) + "  ·  ◀ pour reculer");
             loadSubtitles(item.stream, p, audio[audioIndex]);
-        }).catch(e => {
-            playToken = null;
-            log("preparation de la lecture en echec : " + e);
-            if (current === opened)
-                tryNextSource("lecture impossible : " + e.message);
-        });
+    }
+
+    // Suivi du prechargement : attente au demarrage, pause automatique si l'avance s'epuise.
+    function pollPrefetch() {
+        const pf = current ? current.prefetch : null;
+        const page = playerLoader.item;
+        if (!pf || !page || screen !== "player")
+            return;
+        Http.fetchJson(cfg.agent + "/fbx/prefetch/" + pf.id + "/status").then(st => {
+            if (current.prefetch !== pf || playerLoader.item !== page)
+                return;
+            page.bufferedFrom = st.total ? st.base / st.total : 0;
+            page.bufferedTo = st.total ? st.end / st.total : 0;
+            if (st.error) {
+                log("prechargement interrompu : " + st.error);
+                if (pf.mode !== "play")
+                    beginPlayback(page, pf, "lecture sans prechargement");
+                current.prefetch = null;
+                return;
+            }
+            const dur = pf.durationMs || page.durationMs;
+            const pos = pf.mode === "start" ? pf.startAtMs : page.positionMs;
+            const detail = "Telechargement " + (st.rateBps * 8 / 1e6).toFixed(1) + " Mbit/s   ·   video "
+                + (Buffer.bytesPerSecond(st.total, dur) * 8 / 1e6).toFixed(1) + " Mbit/s";
+            if (pf.mode === "start" || pf.mode === "stall") {
+                // Objectif recalcule a chaque mesure de vitesse ; sans mesure (debut du
+                // telechargement), on attend jusqu'a 10 s avant de se contenter du minimum.
+                if (st.rateBps > 0)
+                    pf.targetS = pf.mode === "start" ? Buffer.startTarget(st, dur, pos) : Buffer.resumeTarget(st, dur, pos);
+                else if (!pf.targetS && Date.now() - pf.started > 10000)
+                    pf.targetS = Buffer.defaultTarget(pf.mode);
+                if (!pf.targetS && !st.done) {
+                    page.bufferPercent = 0;
+                    page.bufferEta = "";
+                    page.bufferDetail = "Mesure de la vitesse de telechargement…";
+                    return;
+                }
+                const pr = Buffer.progress(st, dur, pos, pf.targetS);
+                page.bufferPercent = pr.percent;
+                page.bufferEta = pr.etaS > 0 ? Buffer.formatEta(pr.etaS) : "";
+                page.bufferDetail = detail + (pr.tooLong ? "\nAttente longue : la connexion est plus lente que la video. OK pour lancer quand meme." : "");
+                if (pr.ready)
+                    beginPlayback(page, pf, "");
+            } else if (Date.now() > pf.skipUntil && page.positionMs > 0 && Buffer.shouldStall(st, dur, page.positionMs)) {
+                pf.mode = "stall";
+                prefetchWaiting = true;
+                pf.targetS = 0;
+                pf.started = Date.now();
+                page.pausePlayer();
+                page.bufferTitle = "Mise en memoire…";
+                page.bufferPercent = 0;
+                page.bufferVisible = true;
+                log("avance epuisee : pause automatique");
+            }
+            maybePrepareNext(page);
+        }).catch(() => {});
+    }
+
+    function beginPlayback(page, pf, reason) {
+        const wasStart = pf.mode === "start";
+        pf.mode = "play";
+        prefetchWaiting = false;
+        page.bufferVisible = false;
+        if (wasStart) {
+            page.source = current.playUrl;
+            log("lecture apres prechargement (" + Math.round((Date.now() - pf.started) / 1000) + " s)" + (reason ? " : " + reason : ""));
+        } else {
+            page.resumePlayer();
+            log("reprise apres mise en memoire");
+        }
+    }
+
+    // OK sur l'ecran d'attente : lancer tout de suite, sans pause automatique pendant 1 min.
+    function skipBuffering() {
+        const pf = current ? current.prefetch : null;
+        const page = playerLoader.item;
+        if (!pf || !page)
+            return;
+        pf.skipUntil = Date.now() + 60000;
+        beginPlayback(page, pf, "lance par l'utilisateur");
+    }
+
+    // Episode suivant : a 4 min de la fin, choix de la source la plus proche et prechargement
+    // de son debut. L'enchainement est alors quasi immediat.
+    function maybePrepareNext(page) {
+        const next = current.nextVideo;
+        if (!next || current.nextPrep || !page.durationMs || page.durationMs - page.positionMs > 240000)
+            return;
+        const prep = { video: next, item: null, list: [] };
+        current.nextPrep = prep;
+        const opened = current;
+        const items = [];
+        client.streams(addons, current.type, next.id, g => g.items.forEach(s => items.push({ addon: g.addon, stream: s })))
+            .then(() => {
+                if (current !== opened)
+                    return;
+                const ctx = streamContext();
+                const visible = Sorting.sortStreams(items, sortPrefs, ctx).visible;
+                prep.list = visible;
+                prep.item = Sorting.closest(current.playingItem, visible) || visible[0] || null;
+                if (!prep.item)
+                    return;
+                log("episode suivant prepare : " + prep.item.addon + " (" + (prep.item.badges || "") + ")");
+                const r = Playback.resolve(prep.item.stream, cfg, { season: next.season, episode: next.episode || next.number });
+                if (settings.prefetch && r.kind === "media" && /^https?:[/][/]/.test(r.mediaUrl) && Config.hostFromUrl(r.mediaUrl) !== pcHost)
+                    Http.request("GET", cfg.agent + "/fbx/prefetch?maxMb=200&url=" + encodeURIComponent(r.mediaUrl),
+                                 undefined, false, 30000).catch(() => {});
+            }).catch(() => {});
     }
 
     // Episode suivant : source la plus proche de celle de l'episode precedent
@@ -711,7 +867,14 @@ Item {
         stopPlayer();
         if (!next)
             return;
+        const prep = current.nextPrep;
         selectEpisode(next);
+        if (prep && prep.video === next && prep.item) {
+            // Source choisie et prechargee pendant l'episode precedent : on lance tout de suite.
+            current.fallbacks = prep.list.filter(x => x !== prep.item).slice(0, 2);
+            play(prep.item);
+            return;
+        }
         // Des que l'addon de l'episode precedent repond : la source qui lui ressemble le plus.
         current.autoPlayLike = !previous ? null
             : previous.info ? previous : (Sorting.sortStreams([previous], sortPrefs).visible[0] || null);
@@ -834,6 +997,8 @@ Item {
             { section: "Lecture", key: "encoder", label: "Conversion sur le PC", action: "choice",
               value: settings.encoder === "cpu" ? "Processeur (lent)"
                      : cfg.profile ? "Carte graphique (" + cfg.profile + ")" : "Processeur (aucune carte detectee)" },
+            { section: "Lecture", key: "prefetch", label: "Prechargement par le PC (anti-coupures)", action: "choice",
+              value: settings.prefetch ? "Oui" : "Non" },
             { section: "Lecture", key: "sort", label: "Tri des sources", value: "Ouvrir", action: "button" },
             { section: "Lecture", key: "clearPositions", label: "Oublier les positions de lecture", value: "Effacer", action: "button" },
             { section: "A propos", key: "version", label: "Version", action: "info",
@@ -868,6 +1033,7 @@ Item {
         case "autoNext": settings.autoNext = !settings.autoNext; break;
         case "quality": settings.maxWidth = settings.maxWidth >= 1920 ? 1280 : 1920; break;
         case "encoder": settings.encoder = settings.encoder === "cpu" ? "auto" : "cpu"; break;
+        case "prefetch": settings.prefetch = !settings.prefetch; break;
         case "sort": openSortSettings(); return;
         case "clearPositions":
             positions = {};
@@ -934,6 +1100,7 @@ Item {
         property bool autoNext: true
         property int maxWidth: 1280
         property string encoder: "auto"   // auto : carte graphique si disponible ; cpu : processeur
+        property bool prefetch: true       // prechargement par le PC
         property real boxLinkMbps: 0       // debit PC -> Player mesure
         property real boxInternetMbps: 0   // debit Internet -> Player mesure
         // PC utilise (lu aussi par le lanceur du Player, bootstrap/main.qml)
@@ -959,6 +1126,14 @@ Item {
         repeat: true
         running: app.screen === "player"
         onTriggered: savePosition()
+    }
+
+    Timer {
+        // Prechargement : 1 s pendant l'attente, 3 s pendant la lecture.
+        interval: app.prefetchWaiting ? 1000 : 3000
+        repeat: true
+        running: app.screen === "player"
+        onTriggered: app.pollPrefetch()
     }
 
     Timer {
@@ -1082,6 +1257,7 @@ Item {
                 item.audioChosen.connect(app.chooseAudio);
                 item.subtitleChosen.connect(index => app.chooseSubtitle(index, false));
                 item.nextRequested.connect(() => Qt.callLater(app.playNext));
+                item.skipBuffering.connect(app.skipBuffering);
                 app.applySubtitles();
             }
         }

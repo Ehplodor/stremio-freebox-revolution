@@ -5,6 +5,10 @@ Il expose un catalogue "Tests Freebox" dont chaque film pointe vers une video sy
 de apps/step0-test/media (generee par tools/make_test_media.sh), servie avec Range.
 
   python tools/test_addon.py            # http://<IP-du-PC>:8235/manifest.json
+
+Pour les films "MP4" et "HEVC", deux sources supplementaires simulent une connexion lente
+(debit bride) : elles sont annoncees en 127.0.0.1 pour passer par le prechargement de l'agent,
+comme une vraie source Internet (prechargement desactive : elles sont illisibles).
 """
 
 import argparse
@@ -13,6 +17,7 @@ import http.server
 import json
 import os
 import sys
+import time
 import urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -20,6 +25,7 @@ from fbx_qml_run import NoCacheHandler, ThreadedHTTPServer  # noqa: E402
 
 MEDIA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "apps", "step0-test", "media")
 PREFIX = "fbxtest-"
+SLOW_ITEMS = ("mp4-aac", "hevc-srt")
 POSTER = "https://dummyimage.com/300x450/1d2733/ffffff.png&text="
 
 ITEMS = [
@@ -80,16 +86,28 @@ class AddonHandler(NoCacheHandler):
                 if resource == "meta":
                     return self.json({"meta": meta(item, base)})
                 if resource == "stream":
-                    return self.json({"streams": [{
-                        "name": "PC",
-                        "title": item[2],
-                        "url": "%s/media/%s" % (base, item[2]),
-                    }]})
+                    streams = [{"name": "PC", "title": item[2], "url": "%s/media/%s" % (base, item[2])}]
+                    if item[0] in SLOW_ITEMS:
+                        # Adresse locale du PC : l'appli y voit une source distante et la fait precharger
+                        # par l'agent (seul a pouvoir la joindre). Le parametre n change a chaque
+                        # demande : prechargement neuf a chaque essai.
+                        far = "http://127.0.0.1:%s/slow/%s?n=%d&" % (host.rsplit(":", 1)[-1], item[2], time.time())
+                        streams += [
+                            {"name": "PC lent", "title": item[2] + " - 1,5 Mbit/s (moitie du debit video)",
+                             "url": far + "kbps=1500"},
+                            {"name": "PC irregulier", "title": item[2] + " - rapide puis 1 Mbit/s apres 6 Mo",
+                             "url": far + "kbps=1000&fastMb=6"},
+                        ]
+                    return self.json({"streams": streams})
                 subs = []
                 if item[0] == "hevc-srt":
                     subs.append({"id": "srt-fr", "lang": "fre", "url": "%s/media/test.srt" % base})
                 return self.json({"subtitles": subs})
         if path.startswith("/media/"):
+            return super().do_GET()
+        if path.startswith("/slow/"):
+            q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            self._throttle = (int(q.get("kbps", ["1500"])[0]) * 1000 / 8, int(q.get("fastMb", ["0"])[0]) * 1048576)
             return super().do_GET()
         self.send_error(404)
 
@@ -103,9 +121,35 @@ class AddonHandler(NoCacheHandler):
         self.wfile.write(body)
 
     def translate_path(self, path):
-        # /media/x -> MEDIA_DIR/x
-        rel = urllib.parse.unquote(path.split("?", 1)[0])[len("/media/"):]
+        # /media/x ou /slow/x -> MEDIA_DIR/x
+        rel = urllib.parse.unquote(path.split("?", 1)[0])
         return os.path.join(MEDIA_DIR, os.path.basename(rel))
+
+    def copyfile(self, source, outputfile):
+        throttle = getattr(self, "_throttle", None)
+        if not throttle:
+            return super().copyfile(source, outputfile)
+        rate, fast = throttle
+        remaining = getattr(self, "_range", None)
+        remaining = remaining if remaining is not None else 1 << 62
+        started, sent = time.time(), 0
+        try:
+            while remaining > 0:
+                pos = source.tell()
+                chunk = source.read(min(32768, remaining))
+                if not chunk:
+                    break
+                outputfile.write(chunk)
+                remaining -= len(chunk)
+                if pos + len(chunk) > fast:
+                    sent += len(chunk)
+                    delay = started + sent / rate - time.time()
+                    if delay > 0:
+                        time.sleep(delay)
+                else:
+                    started = time.time()
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            pass
 
 
 def main():

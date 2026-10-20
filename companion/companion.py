@@ -40,6 +40,8 @@ import subprocess
 import sys
 import time
 import uuid
+
+import prefetch as prefetch_mod
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -450,8 +452,118 @@ def static_file(handler, method="GET"):
             pass
 
 
+# ----- Prechargement (companion/prefetch.py) -----
+
+PREFETCH = None
+
+
+def prefetch_manager():
+    global PREFETCH
+    if PREFETCH is None:
+        PREFETCH = prefetch_mod.Manager(os.path.join(CONFIG_DIR, "cache"))
+    return PREFETCH
+
+
+def passthrough(handler, url, start, end):
+    """Relais direct de [start, end] depuis la source (saut loin devant la partie prechargee)."""
+    headers = dict(prefetch_mod.UA)
+    headers["Range"] = "bytes=%d-%d" % (start, end)
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=30) as rsp:
+            while True:
+                chunk = rsp.read(65536)
+                if not chunk:
+                    break
+                handler.wfile.write(chunk)
+    except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+        pass
+    except Exception as e:  # noqa: BLE001
+        sys.stderr.write("[compagnon] relais direct en echec : %s\n" % e)
+
+
+def prefetch_file(handler, item, method):
+    total = item.wait_total()
+    if not total:
+        handler.send_error(502, "source injoignable : %s" % (item.error or "taille inconnue"))
+        return
+    start, end, status = 0, total - 1, 200
+    m = re.match(r"bytes=(\d*)-(\d*)$", handler.headers.get("Range", ""))
+    if m:
+        if m.group(1):
+            start = int(m.group(1))
+            end = min(int(m.group(2)), total - 1) if m.group(2) else total - 1
+        elif m.group(2):
+            start = max(total - int(m.group(2)), 0)
+        if start > end:
+            handler.send_response(416)
+            handler.send_header("Content-Range", "bytes */%d" % total)
+            handler.send_header("Content-Length", "0")
+            handler.end_headers()
+            return
+        status = 206
+    ext = os.path.splitext(urllib.parse.urlsplit(item.url).path)[1].lower()
+    ctype = {".mkv": "video/x-matroska", ".mp4": "video/mp4", ".avi": "video/x-msvideo",
+             ".ts": "video/mp2t", ".m4v": "video/mp4", ".webm": "video/webm"}.get(ext, "application/octet-stream")
+    handler.send_response(status)
+    handler.send_header("Content-Type", ctype)
+    handler.send_header("Content-Length", str(end - start + 1))
+    handler.send_header("Accept-Ranges", "bytes")
+    if status == 206:
+        handler.send_header("Content-Range", "bytes %d-%d/%d" % (start, end, total))
+    handler.end_headers()
+    if method == "HEAD":
+        return
+    st = item.status()
+    try:
+        if start < st["base"] or start > st["end"] + prefetch_mod.FAR_AHEAD:
+            passthrough(handler, item.url, start, end)
+            return
+        reached = item.read_into(handler.wfile, start, end)
+        if reached <= end:
+            # Prechargement arrete (episode suivant partiel, erreur) : la suite depuis la source.
+            passthrough(handler, item.url, reached, end)
+    except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+        pass                              # le lecteur a coupe (saut, arret) : normal
+
+
+def prefetch_route(handler, method):
+    parts = handler.path.split("?", 1)[0].strip("/").split("/")   # fbx prefetch [id] [action]
+    mgr = prefetch_manager()
+    if len(parts) == 2:
+        url = query_param(handler.path, "url") or ""
+        if not url.startswith(("http://", "https://")):
+            handler.send_error(400, "url manquante")
+            return
+        try:
+            fraction = float(query_param(handler.path, "start") or 0)
+            max_mb = int(query_param(handler.path, "maxMb") or 0)
+            max_gb = int(handler.config.get("cacheMaxGb") or 15)
+        except ValueError:
+            handler.send_error(400, "parametre invalide")
+            return
+        item = mgr.start(url, fraction, max_mb * 1024 * 1024, max_gb)
+        item.wait_total(timeout=20)
+        data = item.status()
+        data["fileUrl"] = "/fbx/prefetch/%s/file" % item.id
+        send_json(handler, 200 if not data["error"] else 502, data)
+        return
+    item = mgr.get(parts[2]) if len(parts) >= 3 else None
+    if not item:
+        handler.send_error(404, "prechargement inconnu (agent relance ?)")
+        return
+    if len(parts) == 4 and parts[3] == "status":
+        send_json(handler, 200, item.status())
+    elif len(parts) == 4 and parts[3] == "file":
+        prefetch_file(handler, item, method)
+    else:
+        handler.send_error(404)
+
+
 def agent_route(handler, method):
     path = handler.path.split("?", 1)[0]
+    if path.startswith("/fbx/prefetch"):
+        prefetch_route(handler, method)
+        return
     if path == "/fbx/api/status":
         cfg = handler.config
         send_json(handler, 200, {
@@ -460,6 +572,7 @@ def agent_route(handler, method):
             "stremio": stremio_status(handler.stremio),
             # Capacites mesurees (tools/launcher.py) : vitesse de conversion, debit Internet.
             "capacity": load_config().get("capacity"),
+            "liveInternetMbps": prefetch_manager().live_mbps(),
             "testAddon": handler.test_addon or None,
         })
     elif path == "/fbx/api/speedtest":
