@@ -960,7 +960,7 @@ Item {
     // Position de reprise : enregistree regulierement et a l'arret.
     function savePosition() {
         const page = playerLoader.item;
-        if (!page || !current || !current.videoId || page.positionMs <= 0)
+        if (!page || !current || !current.videoId || current.id === "essai" || page.positionMs <= 0)
             return;
         positions = Resume.record(positions, accountId, current.videoId, page.positionMs, page.durationMs, Date.now());
         settings.positions = JSON.stringify(positions);
@@ -1009,6 +1009,10 @@ Item {
         if (playerLoader.item)
             playerLoader.item.stop();
         playerLoader.source = "";
+        if (current && current.id === "essai") {       // essai V2.1 : retour aux reglages
+            showTab(2);
+            return;
+        }
         screen = "details";
         details.forceActiveFocus();
         // Barres de progression a jour
@@ -1149,6 +1153,12 @@ Item {
             { section: "Capacités", key: "speed", label: "Mesurer les débits du Player", value: measuring ? "mesure…" : "Mesurer", action: "button" },
             { section: "À propos", key: "version", label: "Version", action: "info",
               value: "appli " + appVersion + (pc ? "  ·  agent du PC " + pc.agentVersion : "") });
+        rows.push(
+            { section: "Essais « zéro PC » (V2.1)", key: "trialNative", label: "Lecteur natif du Player (vidéo de test)", value: "Essayer", action: "button" },
+            { section: "Essais « zéro PC » (V2.1)", key: "trialYoutube", label: "Appli YouTube du Player (bande-annonce)", value: "Essayer", action: "button" },
+            { section: "Essais « zéro PC » (V2.1)", key: "trialFbxAuth", label: settings.fbxAppToken ? "Freebox Server : appli autorisée" : "Autoriser l'appli sur la Freebox Server",
+              value: settings.fbxAppToken ? "Refaire" : "Autoriser", action: "button" },
+            { section: "Essais « zéro PC » (V2.1)", key: "trialFbxDownloads", label: "Lire l'aperçu du dernier téléchargement de la Server", value: "Lire", action: "button" });
         modules.forEach(m => rows.push({ section: "Diagnostic (modules de la box)", key: "module", label: m.name, action: "info",
                                          value: m.ok ? "présent" : "absent", tone: m.ok ? "ok" : "" }));
         settingsPage.setRows(rows);
@@ -1185,8 +1195,69 @@ Item {
             toast("Positions de lecture effacées");
             break;
         case "speed": measureLinks(); break;
+        case "trialNative":
+        case "trialYoutube":
+        case "trialFbxAuth":
+        case "trialFbxDownloads":
+            runTrial(key);
+            return;
         }
         refreshSettingsRows();
+    }
+
+    // ===================== Essais « zero PC » (V2.1, docs/V2.1-ESSAIS.md) =====================
+
+    // Video H.264 publique (Blender Foundation, Big Buck Bunny) et bande-annonce YouTube.
+    readonly property string trialVideo: "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+    readonly property string trialYoutube: "https://www.youtube.com/watch?v=aqz-KE-bpKQ"
+
+    function runTrial(key) {
+        try {
+            if (key === "trialNative") {
+                log("essai : App.urlOpen vers le lecteur natif (" + trialVideo + ")");
+                App.urlOpen(trialVideo, "video/mp4");
+                toast("Demandé au Player : la vidéo s'ouvre-t-elle dans son lecteur ?");
+            } else if (key === "trialYoutube") {
+                log("essai : App.urlOpen vers YouTube");
+                App.urlOpen(trialYoutube, "");
+                toast("Demandé au Player : l'appli YouTube s'ouvre-t-elle ?");
+            } else {
+                trialsLoader.active = true;
+                if (trialsLoader.status !== Loader.Ready) {
+                    toast("Essais Freebox Server indisponibles (fbx.web absent)", "error");
+                    return;
+                }
+                if (key === "trialFbxAuth")
+                    trialsLoader.item.authorize();
+                else
+                    trialsLoader.item.listDownloads();
+            }
+        } catch (e) {
+            log("essai " + key + " en échec : " + e);
+            toast("Essai en échec : " + e, "error");
+        }
+    }
+
+    // Lecture d'une URL quelconque (aperçu de la Freebox Server), sans fiche ni addon.
+    function playDirectUrl(url, title) {
+        current = { type: "movie", id: "essai", videoId: "essai", meta: { name: title }, rawStreams: [] };
+        const p = { kind: "play", url: url, mediaUrl: url, transcoded: false, probe: null };
+        startPlayer({ addon: "Freebox Server", stream: { url: url, subtitles: [] }, badges: "aperçu Freebox Server" },
+                    p, { url: url, mediaUrl: url, prefetch: null }, [], 0);
+    }
+
+    Loader {
+        id: trialsLoader
+        active: false
+        source: "Trials.qml"
+        onLoaded: {
+            item.appToken = Qt.binding(() => settings.fbxAppToken);
+            item.appVersion = Qt.binding(() => app.appVersion);
+            item.tokenChanged.connect(t => { settings.fbxAppToken = t; app.refreshSettingsRows(); });
+            item.status.connect((m, kind) => app.toast(m, kind || undefined));
+            item.logMessage.connect(app.log);
+            item.playRequested.connect(app.playDirectUrl);
+        }
     }
 
     // Telecharge url et renvoie le debit en Mbit/s (0 si echec).
@@ -1267,6 +1338,7 @@ Item {
         property string pcName: ""
         property bool accountOffered: false
         property string pcMode: "auto"     // auto : PC utilise s'il repond ; off : jamais
+        property string fbxAppToken: ""    // jeton Freebox OS (essais V2.1), jamais dans les journaux
     }
 
     ListModel { id: rowsModel }
