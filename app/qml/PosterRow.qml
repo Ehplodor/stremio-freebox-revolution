@@ -39,6 +39,7 @@ FocusScope {
 
     ListView {
         id: list
+        objectName: "affiches"
         anchors { top: header.bottom; topMargin: 12; left: parent.left; right: parent.right; bottom: parent.bottom }
         orientation: ListView.Horizontal
         leftMargin: T.margin

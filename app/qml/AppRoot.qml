@@ -1,4 +1,5 @@
 import QtQuick 2.15
+import QtQuick.Window 2.2
 import fbx.application 1.0
 import "../js/config.js" as Config
 import "../js/http.js" as Http
@@ -854,6 +855,7 @@ Item {
 
         HomePage {
             id: home
+            objectName: "accueil"
             anchors.fill: parent
             visible: app.screen === "home"
             focus: true
@@ -868,6 +870,7 @@ Item {
 
         SearchPage {
             id: search
+            objectName: "recherche"
             property var token: null
             anchors.fill: parent
             visible: app.screen === "search"
@@ -880,6 +883,7 @@ Item {
 
         SettingsPage {
             id: settingsPage
+            objectName: "reglages"
             anchors.fill: parent
             visible: app.screen === "settings"
             onActivated: app.settingAction(key, step)
@@ -888,6 +892,7 @@ Item {
 
         TopBar {
             id: topBar
+            objectName: "barre"
             anchors { left: parent.left; right: parent.right; top: parent.top }
             visible: app.screen === "home" || app.screen === "search" || app.screen === "settings"
             current: ["home", "search", "settings"].indexOf(app.screen)
@@ -900,6 +905,7 @@ Item {
 
         DetailsPage {
             id: details
+            objectName: "fiche"
             anchors.fill: parent
             visible: app.screen === "details"
             progressOf: app.videoProgress
@@ -911,6 +917,7 @@ Item {
 
         SortSettingsPage {
             id: sortPage
+            objectName: "tri"
             anchors.fill: parent
             visible: app.screen === "sort"
             onChanged: app.saveSortPrefs(prefs)
@@ -918,6 +925,7 @@ Item {
 
         AccountPage {
             id: accountPage
+            objectName: "compte"
             anchors.fill: parent
             visible: app.screen === "account"
             onNewCode: app.startLink()
@@ -926,6 +934,7 @@ Item {
 
         Loader {
             id: playerLoader
+            objectName: "lecteur"
             anchors.fill: parent
             visible: app.screen === "player"
             onLoaded: {
@@ -963,6 +972,25 @@ Item {
                 event.accepted = true;
                 app.showTab(1);
             }
+        }
+    }
+
+    // Diagnostic : element sous le focus (noms des parents + position dans les listes).
+    function describeFocus(item) {
+        const names = [];
+        for (let it = item; it; it = it.parent) {
+            if (it.objectName)
+                names.unshift(it.objectName + (it.currentIndex !== undefined ? "[" + it.currentIndex + "]" : ""));
+        }
+        return names.join(" > ") || String(item);
+    }
+
+    Connections {
+        target: Config.DEBUG_FOCUS ? app.Window.window : null
+        function onActiveFocusItemChanged() {
+            const w = app.Window.window;
+            if (w && w.activeFocusItem)
+                app.log("focus : " + app.screen + " | " + app.describeFocus(w.activeFocusItem));
         }
     }
 

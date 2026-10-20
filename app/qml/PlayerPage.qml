@@ -352,13 +352,15 @@ FocusScope {
 
         function open() {
             visible = true;
+            (page.audioTracks.length > 1 ? audioList : subList).forceActiveFocus();
             audioList.currentIndex = page.audioIndex;
             subList.currentIndex = page.subtitleIndex;
-            (page.audioTracks.length > 1 ? audioList : subList).forceActiveFocus();
         }
         function close() {
             visible = false;
-            page.forceActiveFocus();
+            // Rendre le focus a l'element des touches du lecteur : page.forceActiveFocus() le
+            // redonnerait a la derniere liste du menu (FocusScope), invisible, qui capterait OK.
+            keyTarget.forceActiveFocus();
         }
 
         Text {
@@ -372,6 +374,7 @@ FocusScope {
         }
         ListView {
             id: audioList
+            objectName: "menu audio"
             anchors { left: parent.left; leftMargin: 20; top: audioTitle.bottom; topMargin: 10; bottom: parent.bottom; bottomMargin: 20 }
             width: 340
             clip: true
@@ -408,6 +411,7 @@ FocusScope {
         // Synchronisation : Gauche/Droite = -/+ 0,25 s ; OK = remise a zero ; Bas = liste.
         Rectangle {
             id: syncRow
+            objectName: "synchro"
             anchors { left: subTitle.left; right: parent.right; rightMargin: 20; top: subTitle.bottom; topMargin: 10 }
             height: 56
             radius: T.radiusSmall
@@ -435,6 +439,7 @@ FocusScope {
         }
         ListView {
             id: subList
+            objectName: "menu sous-titres"
             anchors { left: subTitle.left; right: parent.right; rightMargin: 20; top: syncRow.bottom; topMargin: 10; bottom: parent.bottom; bottomMargin: 20 }
             clip: true
             model: page.subtitleTracks
@@ -465,7 +470,8 @@ FocusScope {
         }
 
         Keys.onPressed: {
-            if (event.key === Qt.Key_Back || event.key === Qt.Key_Escape || event.key === Qt.Key_Menu) {
+            // La touche Retour de la telecommande Freebox envoie Key_Backspace.
+            if (event.key === Qt.Key_Back || event.key === Qt.Key_Backspace || event.key === Qt.Key_Escape || event.key === Qt.Key_Menu) {
                 event.accepted = true;
                 menu.close();
             }
@@ -522,9 +528,15 @@ FocusScope {
                                      + subtitle.text.replace(/\n/g, " / ") + "\"")
     }
 
+    // Recoit les touches hors du menu ; les touches non traitees remontent au gestionnaire de la page.
+    Item {
+        id: keyTarget
+        focus: true
+    }
+
     focus: true
     Keys.onPressed: {
-        logMessage("touche " + event.key + " (etat " + ["arret", "lecture", "pause"][player.playbackState] + ")");
+        logMessage("touche " + event.key + " (etat " + ["arret", "lecture", "pause"][player.playbackState] + ", position " + fmt(player.position) + ")");
         switch (event.key) {
         case Qt.Key_Return:
         case Qt.Key_Enter:
@@ -538,6 +550,7 @@ FocusScope {
                 player.play();
             break;
         case Qt.Key_Back:
+        case Qt.Key_Backspace:            // touche Retour de la telecommande Freebox
         case Qt.Key_Escape:
             if (nextCard.visible) {
                 page.autoNext = false;

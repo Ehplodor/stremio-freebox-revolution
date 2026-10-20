@@ -35,3 +35,6 @@ const DEFAULT_ADDONS = [
 //            { type: "series", id: "tt5753856", episode: "tt5753856:1:1", noPlay: true }
 // Verification de chargement du lecteur : { loadPlayer: true }
 const AUTOTEST = null;
+
+// Journal de l'element qui a le focus (verification des touches a distance).
+const DEBUG_FOCUS = true;

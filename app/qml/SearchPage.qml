@@ -72,6 +72,7 @@ FocusScope {
 
     GridView {
         id: keyboard
+        objectName: "clavier"
         anchors { left: field.left; top: field.bottom; topMargin: 24 }
         width: 420
         height: 7 * 60
@@ -145,6 +146,7 @@ FocusScope {
 
     ListView {
         id: resultsView
+        objectName: "resultats"
         anchors { left: field.right; leftMargin: -T.margin + 40; right: parent.right; top: header.bottom; topMargin: 14; bottom: parent.bottom }
         clip: true
         spacing: 18

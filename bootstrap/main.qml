@@ -331,7 +331,9 @@ Application {
         Keys.onReturnPressed: if (win.phase === "wait") win.scan()
         Keys.onEnterPressed: if (win.phase === "wait") win.scan()
         Keys.onPressed: {
-            if ((event.key === Qt.Key_Back || event.key === Qt.Key_Escape) && win.phase !== "ready") {
+            // La touche Retour de la telecommande Freebox envoie Key_Backspace.
+            if ((event.key === Qt.Key_Back || event.key === Qt.Key_Backspace || event.key === Qt.Key_Escape)
+                    && win.phase !== "ready") {
                 event.accepted = true;
                 Qt.quit();
             }

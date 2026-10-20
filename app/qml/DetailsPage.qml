@@ -184,6 +184,7 @@ FocusScope {
     // ----- Boutons -----
     ListView {
         id: actions
+        objectName: "boutons"
         anchors { left: parent.left; leftMargin: T.margin; top: info.bottom; topMargin: 22 }
         width: parent.width - 2 * T.margin
         height: 52
@@ -192,18 +193,23 @@ FocusScope {
         interactive: false
         keyNavigationEnabled: true   // sinon les fleches sont desactivees avec interactive: false (Qt >= 5.7)
         focus: true
-        model: [
-            { key: "play", label: page.resumeText ? "▶  " + page.resumeText : "▶  Lecture", primary: true },
-            { key: "sources", label: "Sources" + (page.streams.length ? "  (" + page.streams.length + ")" : "") },
-            { key: "sort", label: "Tri des sources" }
-        ]
+        // Liste fixe : la recalculer (nombre de sources, reprise) remettrait la selection sur "Lecture"
+        // a chaque reponse d'addon. Seuls les libelles changent (label()).
+        model: ["play", "sources", "sort"]
+        function label(key) {
+            if (key === "play")
+                return page.resumeText ? "▶  " + page.resumeText : "▶  Lecture";
+            if (key === "sources")
+                return "Sources" + (page.streams.length ? "  (" + page.streams.length + ")" : "");
+            return "Tri des sources";
+        }
         delegate: Rectangle {
             readonly property bool focused: actions.activeFocus && ListView.isCurrentItem
-            readonly property bool enabledAction: modelData.key === "sort" || page.streams.length > 0
+            readonly property bool enabledAction: modelData === "sort" || page.streams.length > 0
             height: 52
             width: actionLabel.implicitWidth + 48
             radius: 26
-            color: focused ? T.text : modelData.primary ? T.accent : Qt.rgba(1, 1, 1, 0.12)
+            color: focused ? T.text : modelData === "play" ? T.accent : Qt.rgba(1, 1, 1, 0.12)
             opacity: enabledAction ? 1 : 0.45
             scale: focused ? 1.05 : 1
             Behavior on scale { NumberAnimation { duration: T.anim } }
@@ -211,7 +217,7 @@ FocusScope {
             Text {
                 id: actionLabel
                 anchors.centerIn: parent
-                text: modelData.label
+                text: actions.label(modelData)
                 color: parent.focused ? T.bg : T.text
                 font.pixelSize: T.fontBody
                 font.bold: true
@@ -221,7 +227,7 @@ FocusScope {
         Keys.onEnterPressed: activate()
         Keys.onDownPressed: (page.isSeries ? seasonTabs : streamList).forceActiveFocus()
         function activate() {
-            const key = model[currentIndex].key;
+            const key = model[currentIndex];
             if (key === "play" && page.streams.length)
                 page.playBest();
             else if (key === "sources" && page.streams.length)
@@ -242,6 +248,7 @@ FocusScope {
     // ----- Series : saisons et episodes -----
     ListView {
         id: seasonTabs
+        objectName: "saisons"
         visible: page.isSeries && !page.showingSources
         anchors { left: parent.left; leftMargin: T.margin; right: parent.right; top: statusLine.bottom; topMargin: 16 }
         height: 40
@@ -273,6 +280,7 @@ FocusScope {
 
     ListView {
         id: episodeList
+        objectName: "episodes"
         visible: page.isSeries && !page.showingSources
         anchors { left: parent.left; right: parent.right; top: seasonTabs.bottom; topMargin: 14; bottom: parent.bottom }
         orientation: ListView.Horizontal
@@ -363,6 +371,7 @@ FocusScope {
     // ----- Sources -----
     ListView {
         id: streamList
+        objectName: "sources"
         visible: page.showingSources || !page.isSeries
         anchors { left: parent.left; leftMargin: T.margin; right: parent.right; rightMargin: T.margin;
                   top: statusLine.bottom; topMargin: 16; bottom: parent.bottom; bottomMargin: 20 }

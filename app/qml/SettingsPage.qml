@@ -40,6 +40,7 @@ FocusScope {
 
     ListView {
         id: list
+        objectName: "lignes"
         anchors { left: parent.left; right: parent.right; top: title.bottom; topMargin: 20; bottom: parent.bottom; bottomMargin: 30 }
         leftMargin: 0
         focus: true

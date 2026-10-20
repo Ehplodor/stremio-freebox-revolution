@@ -165,6 +165,7 @@ FocusScope {
     // ----- Rangees -----
     ListView {
         id: rows
+        objectName: "rangees"
         anchors { left: parent.left; right: parent.right; top: parent.top; topMargin: 330; bottom: parent.bottom }
         focus: true
         clip: true
