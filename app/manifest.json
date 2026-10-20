@@ -3,6 +3,7 @@
     "identifier": "com.ehplodor.revostream.dev",
     "description": "Client compatible avec les addons Stremio pour le Freebox Player",
     "capabilities": {
+        "net_lan": "required",
         "net_wan": "required"
     },
     "entryPoints": {
