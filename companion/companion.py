@@ -465,21 +465,25 @@ def prefetch_manager():
     return PREFETCH
 
 
-def passthrough(handler, url, start, end):
-    """Relais direct de [start, end] depuis la source (saut loin devant la partie prechargee)."""
+def passthrough(handler, url, start, end, limit=0):
+    """Relais direct de [start, end] depuis la source (saut hors de la partie prechargee).
+    limit : arret apres limit octets. Renvoie la position atteinte ; -1 si le lecteur a coupe."""
     headers = dict(prefetch_mod.UA)
     headers["Range"] = "bytes=%d-%d" % (start, end)
+    pos = start
     try:
         with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=30) as rsp:
-            while True:
-                chunk = rsp.read(65536)
+            while pos <= end and not (limit and pos - start >= limit):
+                chunk = rsp.read(min(65536, end - pos + 1))
                 if not chunk:
                     break
                 handler.wfile.write(chunk)
+                pos += len(chunk)
     except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
-        pass
+        return -1
     except Exception as e:  # noqa: BLE001
         sys.stderr.write("[compagnon] relais direct en echec : %s\n" % e)
+    return pos
 
 
 def prefetch_file(handler, item, method):
@@ -516,10 +520,17 @@ def prefetch_file(handler, item, method):
         return
     st = item.status()
     try:
+        pos = start
         if start < st["base"] or start > st["end"] + prefetch_mod.FAR_AHEAD:
-            passthrough(handler, item.url, start, end)
-            return
-        reached = item.read_into(handler.wfile, start, end)
+            # Hors de la partie prechargee : relais direct. Si le lecteur continue a lire ici (et pas
+            # seulement l'index en fin de fichier), le prechargement le rejoint.
+            pos = passthrough(handler, item.url, start, end, prefetch_mod.REBASE_AFTER)
+            if pos < 0 or pos > end:
+                return
+            if not item.rebase(pos):
+                passthrough(handler, item.url, pos, end)
+                return
+        reached = item.read_into(handler.wfile, pos, end)
         if reached <= end:
             # Prechargement arrete (episode suivant partiel, erreur) : la suite depuis la source.
             passthrough(handler, item.url, reached, end)
