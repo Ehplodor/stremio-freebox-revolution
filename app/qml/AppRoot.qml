@@ -225,6 +225,10 @@ Item {
                                                  type: r.type, cid: r.id, name: r.name + " · " + typeLabel(r.type) }));
             if (screen === "home")
                 home.forceActiveFocus();
+            if (!linksMeasured) {
+                linksMeasured = true;
+                measureLinks();
+            }
             if (Config.AUTOTEST && Config.AUTOTEST.id && !autotestDone) {
                 autotestDone = true;
                 openMeta(Config.AUTOTEST.type, Config.AUTOTEST.id);
@@ -232,6 +236,7 @@ Item {
         }).catch(e => log("chargement des addons en echec : " + e));
     }
     property bool autotestDone: false
+    property bool linksMeasured: false
     property bool loadCheck: false
 
     // Catalogue d'une rangee, une seule requete par session d'accueil.
@@ -370,14 +375,26 @@ Item {
         }).catch(e => log("flux en echec : " + e));
     }
 
+    // Capacites du PC et du reseau, pour ecarter les sources qui ne passeraient pas.
+    function streamContext() {
+        return {
+            capacity: pcInfo ? pcInfo.capacity : null,
+            encoderMode: settings.encoder,
+            boxLinkMbps: settings.boxLinkMbps,
+            boxInternetMbps: settings.boxInternetMbps,
+            durationMin: current && current.meta ? Sorting.runtimeMinutes(current.meta.runtime) : 0,
+            maxWidth: settings.maxWidth
+        };
+    }
+
     function refreshStreams() {
         if (!current)
             return;
         const raw = current.rawStreams || [];
-        const r = Sorting.sortStreams(raw, sortPrefs);
+        const r = Sorting.sortStreams(raw, sortPrefs, streamContext());
         details.setStreams(r.visible);
         details.streamsStatus = (r.visible.length ? r.visible.length + " sources" : raw.length ? "Aucune source affichable" : "")
-            + (r.hidden ? "  ·  " + r.hidden + " masquees (tri)" : "")
+            + (r.hidden ? "  ·  " + r.hidden + " masquees" + (r.heavy ? " (dont " + r.heavy + " trop lourdes pour ce PC/reseau)" : "") : "")
             + (current.streamsProgress || "")
             + (!current.streamsProgress && !raw.length ? "Aucune source trouvee (installez un addon de sources)" : "");
     }
@@ -432,7 +449,8 @@ Item {
         const opened = current;
         details.streamsStatus = "Preparation de la lecture…";
         log("choix du flux " + item.addon + " : " + (item.badges || item.stream.name || ""));
-        Playback.plan(item.stream, cfg, transport, seriesInfo(), forceTranscoding).then(p => {
+        const playCfg = Object.assign({}, cfg, { profile: profileFor(item) });
+        Playback.plan(item.stream, playCfg, transport, seriesInfo(), forceTranscoding).then(p => {
             playToken = null;
             if (current !== opened || screen !== "details")
                 return;
@@ -446,7 +464,7 @@ Item {
                 return;
             }
             const probe = p.probe ? p.probe.streams.map(s => s.track + ":" + s.codec).join(" ") : "probe indisponible";
-            log((p.transcoded ? "transcodage par " + (cfg.profile || "le processeur") : "lecture directe") + " (" + probe + ")");
+            log((p.transcoded ? "transcodage par " + (playCfg.profile || "le processeur") : "lecture directe") + " (" + probe + ")");
             const audio = Playback.audioTracks(p.probe);
             const audioIndex = p.transcoded ? Resume.pickAudio(audio, settings.audioLang) : 0;
             const url = audioIndex > 0 ? Playback.withAudio(p.url, audio[audioIndex].id) : p.url;
@@ -496,6 +514,17 @@ Item {
         log("episode suivant : source la plus proche " + pick.addon + " (" + (pick.badges || "") + ")");
         current.fallbacks = details.streams.filter(x => x !== pick).slice(0, 2);
         play(pick);
+    }
+
+    // Encodeur du PC pour cette source : le plus rapide mesure pour son type de video
+    // (la carte graphique echoue par exemple sur le H.264 10 bits avec Stremio).
+    function profileFor(item) {
+        const info = item.info || Sorting.parse(item.stream);
+        const key = Sorting.codecKey(info) || "hevc";
+        const cap = pcInfo ? pcInfo.capacity : null;
+        if (cap && cap.encoders)
+            return Sorting.bestEncoder(cap, key === "h264" ? "hevc" : key, settings.encoder).encoder;
+        return key === "h264x10" ? "" : cfg.profile;     // sans mesure : prudence sur le 10 bits
     }
 
     // Source suivante de la liste (bouton Lecture), ou message d'echec.
@@ -809,10 +838,25 @@ Item {
             { section: "Lecture", key: "clearPositions", label: "Oublier les positions de lecture", value: "Effacer", action: "button" },
             { section: "A propos", key: "version", label: "Version", action: "info",
               value: "appli " + (pc ? pc.appVersion : "?") + "  ·  agent " + (pc ? pc.agentVersion : "?") },
-            { section: "A propos", key: "speed", label: "Debit PC → Player", value: speedText || "Mesurer", action: "button" }
+            { section: "Capacites", key: "capConvert", label: "Conversion par le PC (HEVC 1080p)", action: "info",
+              value: capacityText() },
+            { section: "Capacites", key: "capPcNet", label: "Internet vers le PC", action: "info",
+              value: pc && pc.capacity && pc.capacity.pcInternetMbps ? pc.capacity.pcInternetMbps + " Mbit/s" : "non mesure" },
+            { section: "Capacites", key: "capLink", label: "PC vers le Player", action: "info",
+              value: settings.boxLinkMbps ? settings.boxLinkMbps + " Mbit/s" : "non mesure" },
+            { section: "Capacites", key: "capBoxNet", label: "Internet vers le Player", action: "info",
+              value: settings.boxInternetMbps ? settings.boxInternetMbps + " Mbit/s" : "non mesure" },
+            { section: "Capacites", key: "speed", label: "Mesurer les debits du Player", value: measuring ? "mesure…" : "Mesurer", action: "button" }
         ]);
     }
-    property string speedText: ""
+    function capacityText() {
+        const cap = pcInfo ? pcInfo.capacity : null;
+        if (!cap || !cap.encoders)
+            return "non mesuree (relancer le lanceur du PC)";
+        const best = Sorting.bestEncoder(cap, "hevc", settings.encoder);
+        return best.factor.toFixed(1) + "x le temps reel" + (best.encoder ? " (" + best.encoder + ")" : " (processeur)")
+            + "  ·  mesure du " + Qt.formatDate(new Date(cap.measuredAt * 1000), "dd/MM");
+    }
 
     function settingAction(key, step) {
         switch (key) {
@@ -830,31 +874,50 @@ Item {
             settings.positions = "{}";
             toast("Positions de lecture effacees");
             break;
-        case "speed": measureSpeed(); break;
+        case "speed": measureLinks(); break;
         }
         refreshSettingsRows();
     }
 
-    // Debit reel PC -> Player : l'agent envoie 4 Mo.
-    function measureSpeed() {
-        speedText = "mesure…";
-        refreshSettingsRows();
-        const bytes = 4 * 1024 * 1024;
-        const start = Date.now();
-        const xhr = new XMLHttpRequest();
-        xhr.responseType = "arraybuffer";
-        xhr.onreadystatechange = () => {
-            if (xhr.readyState !== XMLHttpRequest.DONE)
-                return;
-            const ms = Math.max(1, Date.now() - start);
-            const got = xhr.status === 200 && xhr.response ? xhr.response.byteLength : 0;
-            speedText = got ? (got * 8 / 1000 / ms).toFixed(1) + " Mbit/s"
-                              + (got * 8 / 1000 / ms < 6 ? "  ·  juste pour la 1080p" : "") : "echec";
-            refreshSettingsRows();
-        };
-        xhr.open("GET", cfg.agent + "/fbx/api/speedtest?bytes=" + bytes + "&t=" + start);
-        xhr.send();
+    // Telecharge url et renvoie le debit en Mbit/s (0 si echec).
+    function downloadMbps(url) {
+        return new Promise(resolve => {
+            const start = Date.now();
+            const xhr = new XMLHttpRequest();
+            xhr.responseType = "arraybuffer";
+            xhr.onreadystatechange = () => {
+                if (xhr.readyState !== XMLHttpRequest.DONE)
+                    return;
+                const got = xhr.status === 200 && xhr.response ? xhr.response.byteLength : 0;
+                resolve(got ? got * 8 / 1000 / Math.max(1, Date.now() - start) : 0);
+            };
+            xhr.open("GET", url);
+            xhr.send();
+        });
     }
+
+    // Debits vus par la box : depuis le PC (sources converties) et depuis Internet (lecture
+    // directe). Mesures au demarrage, hors lecture, puis utilisees par le tri.
+    function measureLinks() {
+        if (measuring || screen === "player")
+            return;
+        measuring = true;
+        refreshSettingsRows();
+        const t = Date.now();
+        downloadMbps(cfg.agent + "/fbx/api/speedtest?bytes=" + (4 * 1024 * 1024) + "&t=" + t).then(link => {
+            if (link > 0)
+                settings.boxLinkMbps = Math.round(link * 10) / 10;
+            return downloadMbps("https://speed.cloudflare.com/__down?bytes=4000000&t=" + t);
+        }).then(net => {
+            if (net > 0)
+                settings.boxInternetMbps = Math.round(net * 10) / 10;
+            measuring = false;
+            log("debits : PC -> box " + settings.boxLinkMbps + " Mbit/s, Internet -> box " + settings.boxInternetMbps + " Mbit/s");
+            refreshSettingsRows();
+            refreshStreams();
+        });
+    }
+    property bool measuring: false
 
     // ===================== Interface =====================
 
@@ -871,6 +934,8 @@ Item {
         property bool autoNext: true
         property int maxWidth: 1280
         property string encoder: "auto"   // auto : carte graphique si disponible ; cpu : processeur
+        property real boxLinkMbps: 0       // debit PC -> Player mesure
+        property real boxInternetMbps: 0   // debit Internet -> Player mesure
         // PC utilise (lu aussi par le lanceur du Player, bootstrap/main.qml)
         property string pcHost: ""
         property string pcId: ""

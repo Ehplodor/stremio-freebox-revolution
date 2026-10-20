@@ -28,7 +28,8 @@ const DEFAULT_PREFS = {
     hideUncached: false,
     hideDolbyVision: true,    // couleurs fausses une fois transcode
     maxSizeGb: 0,             // 0 : pas de limite
-    hideTiny: true            // fichiers < 300 Mo : extraits, bonus, faux fichiers
+    hideTiny: true,           // fichiers < 300 Mo : extraits, bonus, faux fichiers
+    hideTooHeavy: true        // sources que ce PC ou ce reseau ne suivraient pas (voir assess)
 };
 
 const RESOLUTION_CHOICES = [2160, 1080, 720];
@@ -84,6 +85,7 @@ function parse(stream) {
     else if (/download|⬇|\[(ad|rd|pm|tb|dl|ed|oc|pp)\]/i.test(name)) info.cached = false;
 
     info.dv = /\b(dv|dovi|dolby[ .-]?vision)\b/i.test(text);
+    info.tenBit = /\b(10[ .-]?bits?|hi10p?|main ?10)\b/i.test(text);
     info.hdr = info.dv || /\bhdr(10\+?)?\b/i.test(text);
     if (/\b(x265|h\.?265|hevc)\b/i.test(text)) info.codec = "HEVC";
     else if (/\b(x264|h\.?264|avc)\b/i.test(text))
@@ -123,6 +125,93 @@ function releaseGroup(stream) {
             return m[1].toLowerCase();
     }
     return "";
+}
+
+// ----- Capacites du PC et du reseau -----
+
+// Debit estime de la source (Mbit/s) : taille / duree, sinon valeur typique de la resolution.
+function estimateMbps(info, durationMin) {
+    if (info.sizeGb > 0 && durationMin > 0)
+        return info.sizeGb * 8192 / (durationMin * 60);
+    return { 2160: 20, 1080: 8, 720: 4, 480: 2 }[info.resolution] || 6;
+}
+
+// Type de conversion a mesurer : "h264" (lisible tel quel), "h264x10", "hevc", "hevc10", "av1".
+function codecKey(info) {
+    if (info.codec === "H.264")
+        return info.tenBit ? "h264x10" : "h264";
+    if (info.codec === "H.264 10 bits")
+        return "h264x10";
+    if (info.codec === "AV1")
+        return "av1";
+    if (info.codec === "HEVC")
+        return info.tenBit ? "hevc10" : "hevc";
+    return "";
+}
+
+// Meilleur encodeur mesure pour ce type de video : { encoder, factor } (factor 0 : inconnu).
+// mode "cpu" : processeur seulement.
+function bestEncoder(capacity, key, mode) {
+    const encoders = (capacity && capacity.encoders) || {};
+    let best = { encoder: "", factor: 0 };
+    Object.keys(encoders).forEach(enc => {
+        if (mode === "cpu" && enc !== "cpu")
+            return;
+        const f = encoders[enc][key === "h264" ? "hevc" : key] || 0;
+        if (f > best.factor)
+            best = { encoder: enc === "cpu" ? "" : enc, factor: f };
+    });
+    return best;
+}
+
+// Faisabilite d'une source : { ok, mode: "direct"|"convert", margin, mbps, reason }.
+// ctx : { capacity, encoderMode, boxLinkMbps, boxInternetMbps, durationMin, maxWidth } ;
+// une valeur inconnue (0 ou absente) ne bloque rien.
+function assess(info, ctx) {
+    ctx = ctx || {};
+    const mbps = estimateMbps(info, ctx.durationMin);
+    const key = codecKey(info);
+    const res = info.resolution || 1080;
+    const margins = [];
+    if (key === "h264" && res <= 1080) {
+        // Lecture directe : la box telecharge elle-meme la source.
+        if (ctx.boxInternetMbps > 0) {
+            const m = ctx.boxInternetMbps / mbps;
+            if (m < 1.15)
+                return { ok: false, mode: "direct", margin: m, mbps: mbps,
+                         reason: "Internet de la box trop lent (" + Math.round(mbps) + " Mbit/s)" };
+            margins.push(m);
+        }
+        return { ok: true, mode: "direct", margin: margins.length ? Math.min.apply(null, margins) : 99, mbps: mbps, reason: "" };
+    }
+    if (!key)
+        return { ok: true, mode: "unknown", margin: 99, mbps: mbps, reason: "" };
+    // Conversion par le PC : il telecharge la source, la convertit et l'envoie a la box.
+    const best = bestEncoder(ctx.capacity, key === "h264" ? "hevc" : key, ctx.encoderMode);
+    if (ctx.capacity && ctx.capacity.encoders) {
+        const pixels = { 2160: 3840 * 2160, 1080: 1920 * 1080, 720: 1280 * 720, 480: 854 * 480 }[res] || 1920 * 1080;
+        const factor = best.factor * (1920 * 1080) / pixels;
+        if (factor < 1.25)
+            return { ok: false, mode: "convert", margin: factor, mbps: mbps,
+                     reason: best.factor ? "trop lourde a convertir pour ce PC" : "conversion impossible sur ce PC" };
+        margins.push(factor / 1.25);
+    }
+    const pcNet = ctx.capacity ? ctx.capacity.pcInternetMbps : 0;
+    if (pcNet > 0) {
+        const m = pcNet / mbps;
+        if (m < 1.15)
+            return { ok: false, mode: "convert", margin: m, mbps: mbps,
+                     reason: "Internet du PC trop lent (" + Math.round(mbps) + " Mbit/s)" };
+        margins.push(m);
+    }
+    if (ctx.boxLinkMbps > 0) {
+        const out = (ctx.maxWidth || 1280) >= 1920 ? 7 : 4;
+        const m = ctx.boxLinkMbps / out;
+        if (m < 1.2)
+            return { ok: false, mode: "convert", margin: m, mbps: mbps, reason: "reseau PC → box trop lent" };
+        margins.push(m);
+    }
+    return { ok: true, mode: "convert", margin: margins.length ? Math.min.apply(null, margins) : 99, mbps: mbps, reason: "" };
 }
 
 // Raison de masquer un flux selon les preferences, ou "".
@@ -177,18 +266,26 @@ function compareBy(criterion, a, b, prefs) {
     }
 }
 
-// items : [{ addon, stream }] -> { visible: [...], hidden: n } ; chaque element recoit info et badges.
-function sortStreams(items, prefsIn) {
+// items : [{ addon, stream }] -> { visible: [...], hidden: n, heavy: n } ; chaque element recoit
+// info, fit (faisabilite) et badges. ctx : capacites du PC et du reseau (voir assess).
+function sortStreams(items, prefsIn, ctx) {
     const prefs = normalize(prefsIn);
     const visible = [];
     let hidden = 0;
+    let heavy = 0;
     items.forEach((item, index) => {
         const info = item.info || parse(item.stream);
-        const entry = Object.assign({}, item, { info: info, index: index, badges: badges(info) });
-        if (hiddenReason(info, prefs))
+        const fit = assess(info, ctx);
+        const entry = Object.assign({}, item, { info: info, fit: fit, index: index,
+                                                badges: badges(info) + fitBadge(fit) });
+        if (hiddenReason(info, prefs)) {
             hidden++;
-        else
+        } else if (!fit.ok && prefs.hideTooHeavy) {
+            hidden++;
+            heavy++;
+        } else {
             visible.push(entry);
+        }
     });
     visible.sort((a, b) => {
         for (let i = 0; i < prefs.order.length; i++) {
@@ -198,7 +295,15 @@ function sortStreams(items, prefsIn) {
         }
         return a.index - b.index;             // ordre d'arrivee en dernier recours
     });
-    return { visible: visible, hidden: hidden };
+    return { visible: visible, hidden: hidden, heavy: heavy };
+}
+
+function fitBadge(fit) {
+    if (!fit.ok)
+        return "  ·  ⚠ " + fit.reason;
+    if (fit.margin < 1.5)
+        return "  ·  ⚠ limite pour ce PC/reseau";
+    return "";
 }
 
 function badges(info) {
@@ -233,6 +338,7 @@ function settingsRows(prefsIn, addonNames) {
     rows.push({ key: "hideDolbyVision", label: "Masquer Dolby Vision", value: p.hideDolbyVision ? "Oui" : "Non" });
     rows.push({ key: "maxSizeGb", label: "Taille maximale", value: p.maxSizeGb ? p.maxSizeGb + " Go" : "Aucune" });
     rows.push({ key: "hideTiny", label: "Masquer les fichiers trop petits (< 300 Mo)", value: p.hideTiny ? "Oui" : "Non" });
+    rows.push({ key: "hideTooHeavy", label: "Masquer les sources trop lourdes pour ce PC / ce reseau", value: p.hideTooHeavy ? "Oui" : "Non" });
     mergedAddonOrder(p, addonNames).forEach((name, i) => {
         rows.push({ key: "addon:" + name, label: "Addon " + (i + 1), value: name });
     });
@@ -273,6 +379,7 @@ function edit(prefsIn, key, step, addonNames) {
     case "hideUncached": p.hideUncached = !p.hideUncached; break;
     case "hideDolbyVision": p.hideDolbyVision = !p.hideDolbyVision; break;
     case "hideTiny": p.hideTiny = !p.hideTiny; break;
+    case "hideTooHeavy": p.hideTooHeavy = !p.hideTooHeavy; break;
     case "maxSizeGb": p.maxSizeGb = cycle(SIZE_CHOICES, p.maxSizeGb, dir); break;
     case "reset": return normalize(null);
     }
@@ -314,4 +421,15 @@ function closest(prev, candidates) {
         }
     });
     return best;
+}
+
+// "148 min", "2h 28min", "45" -> minutes ; 0 si inconnu.
+function runtimeMinutes(runtime) {
+    const t = String(runtime || "");
+    const h = /(\d+)\s*h/i.exec(t);
+    const m = /(\d+)\s*m/i.exec(t);
+    if (h || m)
+        return (h ? parseInt(h[1], 10) * 60 : 0) + (m ? parseInt(m[1], 10) : 0);
+    const n = parseInt(t, 10);
+    return isNaN(n) ? 0 : n;
 }

@@ -26,6 +26,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, ".."))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(ROOT, "companion"))
+import capacity  # noqa: E402
 import companion  # noqa: E402
 import fbx_qml_run  # noqa: E402
 
@@ -194,6 +195,26 @@ def enter_pressed():
     return pressed
 
 
+def check_capacity(cfg, stremio, args):
+    """Mesure (une fois par semaine) avant d'afficher l'appli : Stremio ne convertit qu'une
+    video a la fois, une mesure pendant une lecture la perturberait."""
+    if args.sans_mesure:
+        return
+    profiles = companion.stremio_status(stremio).get("profiles", [])
+    current = cfg.get("capacity")
+    if current and capacity.is_fresh(current, profiles) and not args.mesurer:
+        enc = current.get("encoders", {})
+        best = max((v.get("hevc", 0) for v in enc.values()), default=0)
+        line(OK, "Capacites du PC (mesurees le %s) : conversion HEVC jusqu'a %.1fx, Internet %.0f Mbit/s"
+             % (time.strftime("%d/%m", time.localtime(current["measuredAt"])), best, current.get("pcInternetMbps", 0)))
+        return
+    folder = os.path.join(companion.CONFIG_DIR, "bench")
+    base = "http://127.0.0.1:%d/fbx/bench/" % args.port
+    cfg = companion.load_config()
+    cfg["capacity"] = capacity.measure(stremio, base, profiles, folder, log=lambda m: print(m, flush=True))
+    companion.save_config(cfg)
+
+
 def set_autostart(enable):
     if enable:
         bat = os.path.join(ROOT, "Lancer-Stremio-Freebox.bat")
@@ -215,6 +236,8 @@ def main():
     parser.add_argument("--addon-test", action="store_true", help="servir l'addon de test")
     parser.add_argument("--port", type=int, default=companion.DEFAULT_PORT)
     parser.add_argument("--demarrage-auto", choices=["oui", "non"])
+    parser.add_argument("--mesurer", action="store_true", help="refaire la mesure des capacites du PC")
+    parser.add_argument("--sans-mesure", action="store_true", help="ne pas mesurer les capacites du PC")
     args = parser.parse_args()
 
     if args.demarrage_auto:
@@ -244,6 +267,7 @@ def main():
         test_url = start_test_addon() if args.addon_test else ""
         start_agent(args.port, stremio, test_url)
         line(OK, "Agent pret : http://%s:%d/fbx/api/status" % (pc_ip, args.port))
+        check_capacity(cfg, stremio, args)
     if player and pc_ip:
         launch_on_player(player, pc_ip, args.port, stop)
 

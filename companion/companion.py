@@ -390,7 +390,8 @@ def send_json(handler, status, data):
     _write(handler, body)
 
 
-STATIC_DIRS = {"/fbx/app/": os.path.join(ROOT, "app"), "/fbx/bootstrap/": os.path.join(ROOT, "bootstrap")}
+STATIC_DIRS = {"/fbx/app/": os.path.join(ROOT, "app"), "/fbx/bootstrap/": os.path.join(ROOT, "bootstrap"),
+               "/fbx/bench/": os.path.join(CONFIG_DIR, "bench")}
 
 
 def static_file(handler, method="GET"):
@@ -457,6 +458,8 @@ def agent_route(handler, method):
             "agent": "stremio-fbx", "agentVersion": AGENT_VERSION, "appVersion": app_version(),
             "pcId": cfg["pcId"], "pcName": cfg["pcName"], "ip": local_ip_towards(),
             "stremio": stremio_status(handler.stremio),
+            # Capacites mesurees (tools/launcher.py) : vitesse de conversion, debit Internet.
+            "capacity": load_config().get("capacity"),
             "testAddon": handler.test_addon or None,
         })
     elif path == "/fbx/api/speedtest":
@@ -481,7 +484,7 @@ def agent_route(handler, method):
     elif path == "/fbx/api/start-stremio" and method == "POST":
         ok, message = start_stremio(handler.stremio)
         send_json(handler, 200 if ok else 503, {"ok": ok, "message": message})
-    elif path.startswith(("/fbx/app/", "/fbx/bootstrap/")):
+    elif path.startswith(("/fbx/app/", "/fbx/bootstrap/", "/fbx/bench/")):
         static_file(handler, method)
     else:
         handler.send_error(404)

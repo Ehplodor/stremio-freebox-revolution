@@ -135,3 +135,44 @@ test("episode suivant : source la plus proche (addon, equipe, resolution, langue
     assert.equal(pick.info.group, "groupa");
     assert.equal(sorting.closest(prev, []), null);
 });
+
+// Capacites mesurees sur le PC de Rod (20 octobre 2026) et un vieux PC sans carte graphique.
+const RECENT = { encoders: { cpu: { hevc: 4, hevc10: 3.5, h264x10: 4.6, av1: 2.8 },
+                             "nvenc-win": { hevc: 15, hevc10: 14, h264x10: 0, av1: 11 } }, pcInternetMbps: 10.5 };
+const OLD = { encoders: { cpu: { hevc: 0.9, hevc10: 0.7, h264x10: 1.4, av1: 0.5 } }, pcInternetMbps: 30 };
+
+test("capacites : debit estime, duree, meilleur encodeur", () => {
+    assert.equal(sorting.runtimeMinutes("148 min"), 148);
+    assert.equal(sorting.runtimeMinutes("2h 28min"), 148);
+    assert.equal(sorting.runtimeMinutes(""), 0);
+    assert.equal(Math.round(sorting.estimateMbps({ sizeGb: 9, resolution: 1080 }, 148)), 8);
+    assert.equal(sorting.estimateMbps({ sizeGb: 0, resolution: 2160 }, 148), 20);
+    assert.deepEqual(plain(sorting.bestEncoder(RECENT, "hevc", "auto")), { encoder: "nvenc-win", factor: 15 });
+    assert.deepEqual(plain(sorting.bestEncoder(RECENT, "h264x10", "auto")), { encoder: "", factor: 4.6 },
+        "H.264 10 bits : la carte graphique echoue, le processeur est choisi");
+    assert.deepEqual(plain(sorting.bestEncoder(RECENT, "hevc", "cpu")), { encoder: "", factor: 4 });
+});
+
+test("capacites : sources possibles ou non selon le PC et le reseau", () => {
+    const ctx = { capacity: RECENT, boxLinkMbps: 9.3, boxInternetMbps: 0, durationMin: 120, maxWidth: 1280 };
+    const p = s => sorting.parse(s);
+    const light = p({ name: "[AD+] T\n1080p", title: "Film 1080p x265 FRENCH\n💾 3.0 GB" });
+    const remux = p({ name: "[AD+] T\n1080p", title: "Film 1080p REMUX HEVC FRENCH\n💾 30 GB" });
+    const uhd = p({ name: "[AD+] T\n4k", title: "Film 2160p x265 HDR FRENCH\n💾 6 GB" });
+    assert.ok(sorting.assess(light, ctx).ok, "3,4 Mbit/s HEVC : converti sans souci");
+    const r = sorting.assess(remux, ctx);
+    assert.ok(!r.ok);
+    assert.match(r.reason, /Internet du PC trop lent/);
+    assert.ok(sorting.assess(uhd, ctx).ok, "4K a 7 Mbit/s : Internet suit, la carte graphique aussi (15x / 4)");
+    assert.ok(!sorting.assess(uhd, Object.assign({}, ctx, { capacity: OLD })).ok, "vieux PC : 4K impossible");
+    assert.ok(!sorting.assess(light, Object.assign({}, ctx, { capacity: OLD })).ok, "vieux PC : HEVC 1080p a 0,9x");
+    const h264 = p({ name: "[AD+] T\n1080p", title: "Film 1080p x264 FRENCH\n💾 4 GB" });
+    assert.equal(sorting.assess(h264, Object.assign({}, ctx, { capacity: OLD })).mode, "direct", "H.264 : lu par la box");
+    const sorted = sorting.sortStreams([{ addon: "A", stream: { name: "[AD+] T\n1080p", title: "Film 1080p REMUX HEVC\n💾 30 GB" } },
+                                        { addon: "B", stream: { name: "[AD+] T\n1080p", title: "Film 1080p x265\n💾 3 GB" } }], null, ctx);
+    assert.deepEqual(plain(sorted.visible.map(x => x.addon)), ["B"]);
+    assert.equal(sorted.heavy, 1);
+    const all = sorting.sortStreams([{ addon: "A", stream: { name: "[AD+] T\n1080p", title: "Film 1080p REMUX HEVC\n💾 30 GB" } }],
+                                    sorting.edit(null, "hideTooHeavy", 0), ctx);
+    assert.match(all.visible[0].badges, /Internet du PC trop lent/, "reglage : tout afficher avec l'avertissement");
+});
