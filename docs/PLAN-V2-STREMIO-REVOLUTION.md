@@ -9,8 +9,8 @@ des recherches complémentaires faites le même jour (sources en fin de document
 
 Passer d'un « client Stremio qui marche » (V1) à **l'équivalent de Stremio sur la Freebox Player
 Revolution** : mêmes écrans et fonctions que Stremio Desktop/Web, synchronisés avec le compte Stremio
-dans les deux sens, installable depuis le FreeStore et **utilisable sans PC** pour tout ce que la box sait
-faire seule, le PC restant un accélérateur (conversion HEVC, préchargement, torrents).
+dans les deux sens, installable depuis le FreeStore et **sans aucun PC** : chaque fonction qui passe
+aujourd'hui par le PC a une solution « box seule » (§3 bis). Le PC devient facultatif, un simple bonus.
 
 Ce qui reste hors d'atteinte, quoi qu'on fasse : décoder du HEVC/AV1/4K/HDR sur la box (matériel de
 2010), exécuter du code natif ou WebAssembly (QML/JavaScript seulement).
@@ -50,6 +50,28 @@ Ce qui reste hors d'atteinte, quoi qu'on fasse : décoder du HEVC/AV1/4K/HDR sur
    `getNotification`. Format exact de `LibraryItem` et de son `state` relevé (voir §6.2).
 5. **Installation hors FreeStore impossible** sur le firmware actuel (API développeur limitée à
    `debug_qml_app`, aucun format reconnu depuis l'explorateur). La bêta privée FreeFactory est la voie.
+
+## 3 bis. Se passer entièrement du PC : une solution par point
+
+Demande de Rod (20/10) : **plus de PC du tout**. Ce que le PC fait en V1, et comment le faire sans lui :
+
+| Rôle du PC en V1 | Solution sans PC | Statut |
+|---|---|---|
+| Interface chargée depuis le PC | Toute l'appli dans le paquet FreeStore (option B du §5.1) | Sûr |
+| Lire les liens des débrideurs | Lecture directe par le Player (déjà le cas en H.264) | Validé V1 |
+| Torrents (serveur Stremio) | Gestionnaire de téléchargements de la Freebox Server : magnet + `preview_url` lisible pendant le téléchargement, pièces nécessaires à la lecture prioritaires | **[à vérifier]** V2.1 |
+| Préchargement / anti-coupure | 1) Tampon du lecteur et pause automatique déjà écrits (calcul débit/avance réutilisé tel quel). 2) Pour une connexion trop juste : faire télécharger le lien débrideur par la Freebox Server sur son disque (tâche `http`), puis lire le fichier local pendant qu'il grossit (téléchargement HTTP séquentiel). Pas de `preview_url` pour le HTTP : lecture par l'URL de fichier de Freebox OS (`/api/v4/dl/…`) ou le serveur UPnP de la Server | **[à vérifier]** V2.1 |
+| Conversion HEVC / H.264 10 bits / AV1 | La box ne les décode pas, et la Freebox Server Revolution ne convertit pas. Trois parades, cumulables : 1) **trier et filtrer vers les sources H.264 8 bits** (x264, la majorité des releases 1080p/720p) : c'est le mode par défaut ; 2) **conversion dans le cloud par le débrideur** quand il la propose : Real-Debrid `/streaming/transcode/{id}` renvoie du HLS/MP4 lisible (à confirmer : codec H.264 et pistes audio) ; AllDebrid et TorBox **[à vérifier]** ; 3) source masquée avec la raison (« HEVC, pas de conversion disponible ») | Parade 1 sûre, 2 **[à vérifier]** |
+| Choix de la piste audio (MKV multi-pistes) | 1) Module natif `fbx.os.mms` (moteur multimédia du Player, utilisé par `fbx.media.VideoPlayer` de libfbxqml) : expose `audioList`, `subtitleList`, `currentAudioIndex`, `currentSubtitleIndex`, `subtitleUrl`. Absent en mode développeur (étape 0), **peut-être disponible pour une appli installée depuis le FreeStore** : à sonder en premier dans la bêta ; 2) sinon, préférer les sources à une seule piste dans la langue voulue (tri par mots-clés VFF/VF/MULTI déjà en place) ; 3) le flux HLS converti par le débrideur peut porter une piste choisie **[à vérifier]** | **[à vérifier]** V2.0 |
+| Sous-titres intégrés au MKV | 1) `subtitleList` de `fbx.os.mms` si disponible ; 2) sinon sous-titres des addons (OpenSubtitles), mieux calés grâce au **hash OpenSubtitles calculé sur la box** (taille + 64 Ko de début et de fin, lus par requêtes HTTP `Range` : faisable en JavaScript) ; 3) piste texte (SRT/ASS) extraite en JavaScript en lisant l'index du MKV par requêtes `Range` : possible mais lourd, en dernier recours | Parade 2 sûre |
+| Sous-titres ASS → VTT | Conversion en JavaScript sur la box (le code `vtt.js` existe déjà) | Sûr |
+| Affiches WebP | Préférer les affiches JPEG (Cinemeta/metahub) ; sinon tester le module d'image WebP de Qt sur la box ; sinon un service public de conversion d'images (ex. images.weserv.nl), réglable et désactivable | **[à vérifier]** |
+| Mesure des capacités | Plus de PC à mesurer : on mesure le débit Internet de la box et on évalue chaque source selon codec, débit et mode de lecture disponible | Sûr |
+| Relance de l'appli, bouton téléphone | L'icône du FreeStore suffit | Sûr |
+
+Ce qui reste vraiment impossible sans aucune machine qui convertit : les sources HEVC/AV1/10 bits quand
+le débrideur ne propose pas de conversion. Elles seront masquées avec leur raison. En pratique, le
+filtrage vers le H.264 couvre l'essentiel des films et séries en 1080p et 720p.
 
 ## 4. Parité fonctionnelle visée
 
@@ -92,7 +114,8 @@ seul le point de chargement change.
 |---|---|---|
 | Direct | Toujours | Liens HTTP H.264 (débrideurs, addons HTTP) |
 | Freebox Server **[à vérifier]** | Sans PC, appli autorisée sur la Server | Torrents H.264 via le gestionnaire de téléchargements et `preview_url` |
-| PC | Agent détecté | Tout : conversion HEVC/10 bits/AV1, torrents par le serveur Stremio, préchargement, piste audio, sous-titres intégrés |
+| Conversion par le débrideur **[à vérifier]** | Débrideur qui la propose (Real-Debrid, peut-être d'autres) | Sources HEVC/10 bits converties dans le cloud en HLS lisible |
+| PC (facultatif) | Agent détecté | Bonus seulement : conversion locale, serveur Stremio. Plus aucune fonction ne doit en dépendre |
 
 Le choix du mode se fait par source, comme aujourd'hui l'évaluation des capacités (`sorting.assess`).
 Une source non lisible dans les modes disponibles est masquée ou marquée, avec une raison claire.
@@ -176,13 +199,13 @@ un titre ouvert sans être ajouté est créé avec `removed = temp = true` ; pas
 | # | Jalon | Contenu | Critère de sortie |
 |---|---|---|---|
 | V2.0 | Fondations | Décision A/B/C ; structure §5.3 ; capacités du manifest (`net_lan`, `net_wan`, `net_gw`, `gw_downloader`) ; accents ; tests de rendu des écrans | Bêta installée qui démarre sans PC (catalogues, fiches) |
-| V2.1 | **Test du mode Freebox Server** | Autorisation depuis le Player, ajout d'un magnet, lecture de la `preview_url` d'un torrent H.264 ; mesure du débit et des sauts | Décision : mode sans PC pour les torrents oui/non |
+| V2.1 | **Tests « sans PC »** | 1) Sonder `fbx.os.mms` dans l'appli installée (pistes audio, sous-titres). 2) Freebox Server : magnet + `preview_url` d'un torrent H.264, débit et sauts. 3) Lien débrideur téléchargé par la Server et lu pendant qu'il grossit. 4) Conversion cloud du débrideur (codec, pistes). 5) Affiches WebP | Décision pour chaque point du §3 bis : solution retenue ou source masquée |
 | V2.2 | Bibliothèque synchronisée | `library.js`, `watched.js`, progression écrite dans le compte, vu/non vu, ajouter/retirer | Une reprise commencée sur la box apparaît dans Stremio sur le PC, et inversement |
 | V2.3 | Découvrir + Bibliothèque + Recherche | Écrans complets, filtres, pagination | Parité avec Stremio Web sur ces écrans |
 | V2.4 | Addons | Liste, installation par URL et catalogue, désinstallation, ordre, configuration par QR | Un addon installé sur la box apparaît dans Stremio PC |
 | V2.5 | Calendrier + notifications | Épisodes à venir, pastille de nouveautés | Nouvel épisode signalé le jour de sa sortie |
 | V2.6 | Lecteur | Synchro de progression, « vu » à 90 %, hash OpenSubtitles, mode Freebox Server intégré | Lecture longue (2 h) sans fuite mémoire |
-| V2.7 | Agent PC packagé | Exécutable Windows, Docker, mise à jour | Installation sur un PC vierge en 5 min |
+| V2.7 | Agent PC facultatif | Seulement si un bonus du PC reste utile après V2.1 (sinon abandonné) | Aucune fonction ne dépend du PC |
 | V2.8 | Publication | Visuels, textes, bêta élargie, éventuellement version publique | Validation Free |
 
 Ordre conseillé : V2.0 puis V2.1 en premier (le résultat de V2.1 change l'architecture de lecture),
@@ -200,11 +223,12 @@ ensuite V2.2 (c'est ce qui rend l'appli « Stremio » au quotidien).
 | Délai de validation de chaque version (option B) | Moyen | Option C (canal développeur via le PC) |
 | Mémoire et processeur de la box | Moyen | Budget §7, mesures pendant les tests longs |
 
-Questions à trancher avec Rod au démarrage :
+Questions à trancher avec Rod au démarrage (l'objectif « sans PC » est déjà décidé) :
 1. Option de distribution A, B ou C (§5.1).
 2. Périmètre public : rester en bêta privée (Rod + proches) ou viser une publication ?
 3. Nom public définitif.
 4. Accord pour une autorisation Freebox OS depuis le Player (test V2.1).
+5. Débrideur : rester sur AllDebrid, ou accepter Real-Debrid (conversion cloud documentée) si AllDebrid n'en propose pas ?
 
 ## 11. Méthode de travail (reprise de la V1)
 
@@ -226,7 +250,8 @@ Questions à trancher avec Rod au démarrage :
 > `feasibility/step0-qml-test`. Lis d'abord `docs/PLAN-V2-STREMIO-REVOLUTION.md`, puis `docs/PLAN.md`,
 > `docs/ETAPE0-RESULTATS.md` et `docs/INSTALLATION.md`. Player à 192.168.0.42 (mode développeur), PC
 > 192.168.0.16, Freebox Server 192.168.0.254. Préfixe FreeFactory `com.ehplodor`, appli « Revo Stream »
-> en bêta privée. Commence par les questions du §10, puis les jalons V2.0 et V2.1. Respecte les règles du §11.
+> en bêta privée. Objectif : **aucun PC** (§3 bis). Commence par les questions du §10, puis les jalons
+> V2.0 et V2.1. Respecte les règles du §11.
 
 ## Sources
 
@@ -234,6 +259,8 @@ Questions à trancher avec Rod au démarrage :
 - SDK QML et modules : https://dev.freebox.fr/sdk/player.html, https://dev.freebox.fr/sdk/libfbxqml/,
   https://github.com/fbx/libfbxqml (`fbx/web/freeboxos.js`, `fbx/web/freeboxos_auth.js`)
 - API de téléchargement Freebox OS (magnet, `preview_url`, pièces) : https://dev.freebox.fr/sdk/os/download/
+- Lecteur natif et module `fbx.os.mms` (pistes audio et sous-titres) : https://github.com/fbx/libfbxqml (`fbx/media/view.qml`)
+- Conversion cloud Real-Debrid (`/streaming/transcode`, `/streaming/mediaInfos`) : https://api.real-debrid.com/
 - Requêtes API Stremio : https://github.com/Stremio/stremio-core/blob/development/src/types/api/request.rs
 - Bibliothèque Stremio : https://github.com/Stremio/stremio-core/blob/development/src/types/library/library_item.rs
 - Modèles Stremio : https://github.com/Stremio/stremio-core/tree/development/src/models
