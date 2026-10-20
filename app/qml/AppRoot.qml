@@ -372,6 +372,8 @@ Item {
             if (current.streamsRequest !== request)
                 return;
             log("flux pour " + videoId + " : " + items.length);
+            current.streamsProgress = "";
+            refreshStreams();                  // aussi sans aucune reponse (aucun addon de sources)
             prefetchBest();
             if (current.autoPlayLike)
                 playClosest();

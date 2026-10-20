@@ -16,7 +16,7 @@ FocusScope {
     readonly property var currentMeta: list.currentIndex >= 0 && list.currentIndex < metas.length ? metas[list.currentIndex] : null
     signal activated(var meta)
 
-    height: T.posterH + 78
+    height: T.posterH + 92
 
     Row {
         id: header
@@ -40,7 +40,7 @@ FocusScope {
     ListView {
         id: list
         objectName: "affiches"
-        anchors { top: header.bottom; topMargin: 12; left: parent.left; right: parent.right; bottom: parent.bottom }
+        anchors { top: header.bottom; topMargin: 26; left: parent.left; right: parent.right; bottom: parent.bottom }
         orientation: ListView.Horizontal
         leftMargin: T.margin
         rightMargin: T.margin

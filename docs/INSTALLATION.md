@@ -36,8 +36,8 @@ developpeur (`/pub/devel`) ne connait que `debug_qml_app`, un lancement temporai
 1. Creer un compte developpeur sur **https://factory.free.fr** (FreeFactory) avec votre compte Free.
 2. Sur le PC : `python tools/make_freestore_package.py` produit `dist/revo-stream-<version>.tar.gz`
    (meme format que le plugin Qt Creator de Free, memes verifications du manifest).
-3. Dans FreeFactory : nouvelle application, envoyer le paquet, ajouter les visuels de `bootstrap/freestore/`
-   (icones 80, 150 et 220 px, bannieres 300x90 et 736x152), publier en **beta** et vous ajouter comme
+3. Dans FreeFactory : nouvelle application, envoyer le paquet, ajouter les visuels de `bootstrap/freestore/` (deja aux noms attendus : logo_80/150/220.png, mini_banner.jpg, big_banner.jpg, screenshot1-3.jpg, mini_screenshot1-3.jpg ; captures rendues depuis les vrais ecrans QML)
+   publier en **beta** et vous ajouter comme
    beta-testeur.
 4. L'appli « Revo Stream » apparait dans les applications du Player.
 
