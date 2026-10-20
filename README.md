@@ -7,6 +7,10 @@ avec le SDK Freebox. Usage personnel, en mode développeur.
 - Lecture avec le lecteur du Player ; torrents et transcodage H.264 assurés par le
   serveur de streaming Stremio qui tourne sur un PC Windows du même réseau (port 11470).
 - Synchronisation avec le compte Stremio (bibliothèque, progression).
+- Tri des sources réglable (priorité par addon, cache débrideur, qualité, langue), sources trop lourdes
+  pour le PC masquées, épisode suivant sur la source la plus proche.
+- Préchargement par le PC avec écran d'attente intelligent et pause automatique : lecture sans coupure
+  même sur une connexion lente.
 
 ## Demarrage rapide
 
@@ -22,7 +26,7 @@ Details, icone dans le menu du Player (FreeStore), changement de PC ou de compte
 | Dossier | Contenu |
 |---|---|
 | `Lancer-Stremio-Freebox.bat`, `tools/launcher.py` | Lanceur unique du PC |
-| `companion/` | Agent du PC (port 11480) : relais Stremio (HLS sans piste de sous-titres, piste audio choisie), sous-titres integres, affiches WebP, identite du PC, demarrage de Stremio, fichiers de l'appli |
+| `companion/` | Agent du PC (port 11480) : relais Stremio (HLS sans piste de sous-titres, piste audio choisie), prechargement (`prefetch.py`), mesure des capacites (`capacity.py`), affiches WebP, identite du PC, demarrage de Stremio, fichiers de l'appli |
 | `bootstrap/` | Lanceur installe sur le Player (FreeStore) : trouve le PC et charge l'appli |
 | `app/` | L'appli : accueil, recherche, reglages, fiche, lecteur (`qml/`) et mini-core JavaScript (`js/core/`) |
 | `tools/` | `make_freestore_package.py`, `fbx_qml_run.py`, `test_addon.py`, `make_test_media.sh` |

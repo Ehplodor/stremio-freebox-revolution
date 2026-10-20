@@ -17,7 +17,8 @@ La fenetre doit rester ouverte pendant le visionnage. Options :
 | `--nom "PC du salon"` | Nom du PC affiche sur la tele (enregistre) |
 | `--player 192.168.0.42` | Adresse du Player si la recherche automatique echoue |
 | `--sans-player` | Agent seul, sans afficher l'appli sur la tele |
-| `--addon-test` | Sert aussi l'addon de videos de test |
+| `--addon-test` | Sert aussi l'addon de videos de test (films, une serie de 3 episodes, sources bridees qui simulent une connexion lente) |
+| `--mesurer` / `--sans-mesure` | Refaire / sauter la mesure des capacites du PC (faite automatiquement une fois par semaine) |
 | `--demarrage-auto oui` / `non` | Lancer ce lanceur a chaque ouverture de session Windows (raccourci dans le dossier Demarrage) |
 
 L'identite du PC (nom et identifiant stable) est dans `%APPDATA%\stremio-fbx\agent.json` ; les journaux
@@ -50,6 +51,26 @@ charge son interface depuis le reseau local est acceptee.
 
 En attendant, le lanceur du PC affiche directement l'appli sur la tele (mode developpeur).
 
+## Lecture fluide
+
+- **Capacites du PC** : le lanceur mesure une fois par semaine la vitesse de conversion (processeur, NVENC,
+  AMF selon la machine) et le debit Internet. L'appli masque les sources trop lourdes pour ce PC et choisit
+  l'encodeur le plus rapide pour chaque format (un vieux PC sans carte graphique reste utilisable).
+- **Prechargement par le PC** (Reglages > Lecture, active par defaut) : l'agent telecharge la video en
+  avance dans `%APPDATA%\stremio-fbx\cache` (15 Go au plus, fichiers de plus de 24 h supprimes ; 2 Go
+  toujours laisses libres sur le disque). Avant la lecture, un ecran d'attente indique la progression et
+  le temps restant : l'attente est calculee pour que la lecture ne rattrape jamais le telechargement
+  (quelques secondes si la connexion est rapide). OK lance tout de suite. Si l'avance s'epuise quand meme,
+  la lecture se met en pause d'elle-meme et reprend avec 30 s d'avance. La partie prechargee apparait en
+  gris clair dans la barre de lecture ; apres un saut, le prechargement suit.
+- **Episode suivant** : a 4 min de la fin, l'appli choisit la source la plus proche de celle en cours
+  (meme addon, meme ligne de source, equipe, qualite, langue) et en precharge le debut des que l'episode
+  en cours est entierement telecharge : l'enchainement est quasi immediat.
+- **PC eveille** : tant que le Player utilise l'agent, le PC ne se met pas en veille automatique (demande
+  temporaire a Windows, levee 3 min apres la derniere activite ; aucun reglage n'est modifie).
+- Les sources des torrents (serveur Stremio) et celles du PC lui-meme ne sont pas prechargees : le serveur
+  Stremio gere deja leur cache.
+
 ## Changement de PC ou de compte
 
 - **Autre adresse du PC** (DHCP) : le lanceur du Player le retrouve par son identifiant.
@@ -67,5 +88,7 @@ En attendant, le lanceur du PC affiche directement l'appli sur la tele (mode dev
 | Barre du haut | Gauche/Droite : Accueil, Recherche, Reglages ; OK : ouvrir |
 | Fiche | **Lecture** (meilleure source, ou reprise) ; Sources ; Tri des sources (aussi touche Menu) |
 | Lecteur | OK : pause ; Gauche -10 s ; Droite +30 s ; Haut ou Menu : audio et sous-titres |
+| Sous-titres decales | 4 : plus tot ; 6 : plus tard (pas de 0,25 s) ; 5 : remise a zero (aussi dans le menu Haut) |
+| Ecran de prechargement | OK : lancer maintenant ; Retour : quitter |
 | Fin d'un episode | Episode suivant automatique (OK : tout de suite ; Retour : annuler) |
 | Recherche | Clavier a l'ecran ou chiffres de la telecommande ; Droite : resultats |
