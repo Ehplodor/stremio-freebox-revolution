@@ -136,6 +136,17 @@ test("episode suivant : source la plus proche (addon, equipe, resolution, langue
     assert.equal(sorting.closest(prev, []), null);
 });
 
+test("episode suivant : meme ligne de source quand rien d'autre ne les distingue", () => {
+    const list = sorting.sortStreams([
+        { addon: "Tests", stream: { name: "PC", title: "e2.mkv" } },
+        { addon: "Tests", stream: { name: "PC lent", title: "e2.mkv - 1,5 Mbit/s (moitie du debit video)" } },
+        { addon: "Tests", stream: { name: "PC irregulier", title: "e2.mkv - rapide puis 1 Mbit/s apres 6 Mo" } }
+    ], null).visible;
+    const prev = sorting.sortStreams([{ addon: "Tests",
+        stream: { name: "PC lent", title: "e1.mp4 - 1,5 Mbit/s (moitie du debit video)" } }], null).visible[0];
+    assert.equal(sorting.closest(prev, list).stream.name, "PC lent");
+});
+
 // Capacites mesurees sur le PC de Rod (20 octobre 2026) et un vieux PC sans carte graphique.
 const RECENT = { encoders: { cpu: { hevc: 4, hevc10: 3.5, h264x10: 4.6, av1: 2.8 },
                              "nvenc-win": { hevc: 15, hevc10: 14, h264x10: 0, av1: 11 } }, pcInternetMbps: 10.5 };

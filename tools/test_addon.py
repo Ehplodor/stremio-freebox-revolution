@@ -40,6 +40,10 @@ ITEMS = [
      "Audio FR (440 Hz) et EN (880 Hz), sous-titres integres SRT FR et ASS EN."),
 ]
 
+# Serie de test (episodes d'une minute) : enchainement, episode suivant prepare, source la plus proche.
+SERIES_ID = PREFIX + "serie"
+EPISODES = [(1, 1, "Premier", "test.mp4"), (1, 2, "Deuxieme", "h264_ac3.mkv"), (1, 3, "Troisieme", "test.mp4")]
+
 
 def manifest():
     return {
@@ -48,9 +52,10 @@ def manifest():
         "name": "Tests Freebox",
         "description": "Videos synthetiques servies par le PC",
         "resources": ["catalog", "meta", "stream", "subtitles"],
-        "types": ["movie"],
+        "types": ["movie", "series"],
         "idPrefixes": [PREFIX],
-        "catalogs": [{"type": "movie", "id": "fbxtest", "name": "Tests Freebox"}],
+        "catalogs": [{"type": "movie", "id": "fbxtest", "name": "Tests Freebox"},
+                     {"type": "series", "id": "fbxtest", "name": "Tests Freebox"}],
     }
 
 
@@ -66,6 +71,34 @@ def meta(item, base):
     }
 
 
+def series_meta():
+    return {
+        "id": SERIES_ID,
+        "type": "series",
+        "name": "Serie de test",
+        "poster": POSTER + "Serie%20de%20test",
+        "description": "Trois episodes d'une minute : episode suivant, source la plus proche, prechargement.",
+        "releaseInfo": "2026",
+        "videos": [{"id": "%s:%d:%d" % (SERIES_ID, se, ep), "title": title, "season": se, "episode": ep,
+                    "released": "2026-01-%02dT00:00:00.000Z" % ep} for se, ep, title, _ in EPISODES],
+    }
+
+
+def streams_for(name, base, port, slow):
+    streams = [{"name": "PC", "title": name, "url": "%s/media/%s" % (base, name)}]
+    if slow:
+        # Adresse locale du PC : l'appli y voit une source distante et la fait precharger
+        # par l'agent (seul a pouvoir la joindre). Le parametre n change a chaque
+        # demande : prechargement neuf a chaque essai.
+        far = "http://127.0.0.1:%s/slow/%s?n=%d&" % (port, name, time.time())
+        streams += [
+            {"name": "PC lent", "title": name + " - 1,5 Mbit/s (moitie du debit video)", "url": far + "kbps=1500"},
+            {"name": "PC irregulier", "title": name + " - rapide puis 1 Mbit/s apres 6 Mo",
+             "url": far + "kbps=1000&fastMb=6"},
+        ]
+    return streams
+
+
 class AddonHandler(NoCacheHandler):
     def do_GET(self):
         path = urllib.parse.unquote(self.path.split("?", 1)[0])
@@ -77,6 +110,16 @@ class AddonHandler(NoCacheHandler):
             return self.json(manifest())
         if path == "/catalog/movie/fbxtest.json":
             return self.json({"metas": [meta(i, base) for i in ITEMS]})
+        if path == "/catalog/series/fbxtest.json":
+            return self.json({"metas": [series_meta()]})
+        if path == "/meta/series/%s.json" % SERIES_ID:
+            return self.json({"meta": series_meta()})
+        if path.startswith("/stream/series/%s:" % SERIES_ID) and path.endswith(".json"):
+            se_ep = path[len("/stream/series/%s:" % SERIES_ID):-5].split(":")
+            ep = [e for e in EPISODES if ["%d" % e[0], "%d" % e[1]] == se_ep]
+            return self.json({"streams": streams_for(ep[0][3], base, host.rsplit(":", 1)[-1], True) if ep else []})
+        if path.startswith("/subtitles/series/"):
+            return self.json({"subtitles": []})
         for resource in ("meta", "stream", "subtitles"):
             prefix = "/%s/movie/" % resource
             if path.startswith(prefix) and path.endswith(".json"):
@@ -86,19 +129,8 @@ class AddonHandler(NoCacheHandler):
                 if resource == "meta":
                     return self.json({"meta": meta(item, base)})
                 if resource == "stream":
-                    streams = [{"name": "PC", "title": item[2], "url": "%s/media/%s" % (base, item[2])}]
-                    if item[0] in SLOW_ITEMS:
-                        # Adresse locale du PC : l'appli y voit une source distante et la fait precharger
-                        # par l'agent (seul a pouvoir la joindre). Le parametre n change a chaque
-                        # demande : prechargement neuf a chaque essai.
-                        far = "http://127.0.0.1:%s/slow/%s?n=%d&" % (host.rsplit(":", 1)[-1], item[2], time.time())
-                        streams += [
-                            {"name": "PC lent", "title": item[2] + " - 1,5 Mbit/s (moitie du debit video)",
-                             "url": far + "kbps=1500"},
-                            {"name": "PC irregulier", "title": item[2] + " - rapide puis 1 Mbit/s apres 6 Mo",
-                             "url": far + "kbps=1000&fastMb=6"},
-                        ]
-                    return self.json({"streams": streams})
+                    return self.json({"streams": streams_for(item[2], base, host.rsplit(":", 1)[-1],
+                                                             item[0] in SLOW_ITEMS)})
                 subs = []
                 if item[0] == "hevc-srt":
                     subs.append({"id": "srt-fr", "lang": "fre", "url": "%s/media/test.srt" % base})

@@ -553,13 +553,18 @@ Item {
     function pollPrefetch() {
         const pf = current ? current.prefetch : null;
         const page = playerLoader.item;
-        if (!pf || !page || screen !== "player")
+        if (!page || screen !== "player")
+            return;
+        maybePrepareNext(page);
+        if (!pf)
             return;
         Http.fetchJson(cfg.agent + "/fbx/prefetch/" + pf.id + "/status").then(st => {
             if (current.prefetch !== pf || playerLoader.item !== page)
                 return;
             page.bufferedFrom = st.total ? st.base / st.total : 0;
             page.bufferedTo = st.total ? st.end / st.total : 0;
+            if (st.done || st.error)
+                startNextPrefetch(current.nextPrep);
             if (st.error) {
                 log("prechargement interrompu : " + st.error);
                 if (pf.mode !== "play")
@@ -601,7 +606,6 @@ Item {
                 page.bufferVisible = true;
                 log("avance epuisee : pause automatique");
             }
-            maybePrepareNext(page);
         }).catch(() => {});
     }
 
@@ -651,10 +655,22 @@ Item {
                     return;
                 log("episode suivant prepare : " + prep.item.addon + " (" + (prep.item.badges || "") + ")");
                 const r = Playback.resolve(prep.item.stream, cfg, { season: next.season, episode: next.episode || next.number });
-                if (settings.prefetch && r.kind === "media" && /^https?:[/][/]/.test(r.mediaUrl) && Config.hostFromUrl(r.mediaUrl) !== pcHost)
-                    Http.request("GET", cfg.agent + "/fbx/prefetch?maxMb=200&url=" + encodeURIComponent(r.mediaUrl),
-                                 undefined, false, 30000).catch(() => {});
+                if (settings.prefetch && r.kind === "media" && /^https?:[/][/]/.test(r.mediaUrl) && Config.hostFromUrl(r.mediaUrl) !== pcHost) {
+                    prep.prefetchUrl = r.mediaUrl;
+                    // Pas de concurrence avec le telechargement de l'episode en cours : il attend la fin.
+                    if (!current.prefetch)
+                        startNextPrefetch(prep);
+                }
             }).catch(() => {});
+    }
+
+    function startNextPrefetch(prep) {
+        if (!prep || !prep.prefetchUrl || prep.prefetchStarted)
+            return;
+        prep.prefetchStarted = true;
+        log("prechargement du debut de l'episode suivant");
+        Http.request("GET", cfg.agent + "/fbx/prefetch?maxMb=200&url=" + encodeURIComponent(prep.prefetchUrl),
+                     undefined, false, 30000).catch(() => {});
     }
 
     // Episode suivant : source la plus proche de celle de l'episode precedent
@@ -872,6 +888,7 @@ Item {
         if (prep && prep.video === next && prep.item) {
             // Source choisie et prechargee pendant l'episode precedent : on lance tout de suite.
             current.fallbacks = prep.list.filter(x => x !== prep.item).slice(0, 2);
+            toast("Episode suivant : S" + next.season + " E" + (next.episode || next.number));
             play(prep.item);
             return;
         }

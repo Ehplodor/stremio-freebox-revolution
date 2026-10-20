@@ -389,10 +389,29 @@ function edit(prefsIn, key, step, addonNames) {
 // ----- Episode suivant : source la plus proche de la precedente -----
 
 // Ressemblance entre la source jouee (entree triee : { addon, info }) et une candidate.
+// Mots d'une source, hors numeros d'episode et nombres (S01E02, 2026, 1.4 GB...).
+function words(stream) {
+    const out = {};
+    textOf(stream).toLowerCase().split(/[^a-z0-9à-ÿ+]+/).forEach(w => {
+        if (w.length >= 2 && !/^\d+$/.test(w) && !/^s\d+e\d+$|^e\d+$|^s\d+$/.test(w))
+            out[w] = true;
+    });
+    return Object.keys(out);
+}
+
 function similarity(prev, cand) {
     const a = prev.info, b = cand.info;
     let score = 0;
     if (prev.addon === cand.addon) score += 100;
+    // Meme ligne de source dans l'addon ("[AD+] Torrentio 1080p", "PC lent"...).
+    const nameA = String(prev.stream && prev.stream.name || "").trim();
+    if (nameA && nameA === String(cand.stream && cand.stream.name || "").trim()) score += 40;
+    // Mots communs du nom et du titre (equipe, source, langue...) : jusqu'a 25.
+    const wa = words(prev.stream || {}), wb = words(cand.stream || {});
+    if (wa.length && wb.length) {
+        const common = wa.filter(w => wb.indexOf(w) !== -1).length;
+        score += Math.round(25 * common / Math.max(wa.length, wb.length));
+    }
     if (a.group && a.group === b.group) score += 60;
     if (a.resolution && a.resolution === b.resolution) score += 30;
     if (a.codec && a.codec === b.codec) score += 15;
