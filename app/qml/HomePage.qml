@@ -192,7 +192,7 @@ FocusScope {
                     if (ListView.isCurrentItem) heroDelay.restart();
                     return;
                 }
-                const ref = { transportUrl: model.transportUrl, type: model.type, id: model.cid, name: model.name };
+                const ref = { transportUrl: model.transportUrl, type: model.type, id: model.cid, name: model.name, addonName: model.addonName };
                 row.status = "chargement";
                 page.loadCatalog(ref).then(metas => {
                     row.metas = metas;

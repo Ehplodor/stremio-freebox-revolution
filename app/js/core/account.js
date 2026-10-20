@@ -2,7 +2,7 @@
 // Compte Stremio : liaison par code (link.stremio.com), utilisateur, addons et bibliotheque
 // (api.strem.io). Formes des requetes d'apres stremio-core (src/types/api, MIT,
 // Copyright (c) 2018 Smart Code OOD).
-// Lecture seule pour l'instant : rien n'est ecrit sur le compte.
+// Ecriture : seulement la progression de lecture (datastorePut, voir library.js).
 
 const API = "https://api.strem.io/api/";
 const LINK = "https://link.stremio.com/api/v2/";
@@ -76,6 +76,9 @@ function createAccount(transport) {
             .then(r => r.addons || []),
 
         libraryItems: authKey => call("datastoreGet", { authKey: authKey, collection: "libraryItem", ids: [], all: true }),
+
+        // Elements modifies (LibraryItem complets) : remplace ceux du compte.
+        libraryPut: (authKey, items) => call("datastorePut", { authKey: authKey, collection: "libraryItem", changes: items }),
 
         logout: authKey => call("logout", { type: "Logout", authKey: authKey })
     };

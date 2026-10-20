@@ -12,6 +12,7 @@ import "../js/core/sorting.js" as Sorting
 import "../js/core/resume.js" as Resume
 import "../js/core/subsegments.js" as SubSeg
 import "../js/core/buffer.js" as Buffer
+import "../js/core/library.js" as Library
 
 // Racine de l'appli, embarquee dans le paquet FreeStore (main.qml) ; aussi chargeable depuis
 // l'agent du PC (lanceur bootstrap/, developpement).
@@ -281,10 +282,8 @@ Item {
                 return [];
             })]).then(r => {
                 log("compte : " + r[0].length + " addons, " + r[1].length + " éléments de bibliothèque");
-                localRows = {
-                    continue: Account.continueWatching(r[1]).map(Account.toMeta),
-                    library: Account.library(r[1]).map(Account.toMeta)
-                };
+                libraryItems = r[1];
+                localRows = libraryRows();
                 // Addon local de Stremio Desktop : seulement via le serveur du PC.
                 return r[0].filter(d => cfg.server || !Addons.isLocalAddon(d.transportUrl))
                     .map(d => ({ transportUrl: Addons.localToServer(d.transportUrl, cfg.server), manifest: d.manifest }));
@@ -295,8 +294,10 @@ Item {
             : Promise.resolve(null);
 
         fromAccount.then(accountAddons => {
-            if (!accountAddons)
-                localRows = {};
+            if (!accountAddons) {
+                libraryItems = localLibrary();
+                localRows = libraryRows();
+            }
             const extra = pcActive && pcInfo.testAddon ? [pcInfo.testAddon] : [];
             const urls = (accountAddons ? [] : Config.DEFAULT_ADDONS).concat(extra);
             return client.loadAddons(urls).then(result => {
@@ -306,7 +307,9 @@ Item {
         }).then(list => {
             addons = list;
             const rows = Addons.homeCatalogs(addons);
-            log(addons.length + " addons, " + rows.length + " rangées");
+            if (!perf.addonsMs)
+                perf.addonsMs = Date.now() - perf.startedAt;
+            log(addons.length + " addons, " + rows.length + " rangées en " + fmtSeconds(Date.now() - perf.startedAt));
             catalogCache = {};
             rowsModel.clear();
             if (!authKey) {
@@ -322,8 +325,9 @@ Item {
             if (screen === "home")
                 home.forceActiveFocus();
             if (!linksMeasured) {
+                // Plus tard : les 8 Mo de la mesure ralentiraient le chargement des affiches.
                 linksMeasured = true;
-                measureLinks();
+                measureDelay.start();
             }
             if (Config.AUTOTEST && Config.AUTOTEST.id && !autotestDone) {
                 autotestDone = true;
@@ -340,7 +344,14 @@ Item {
     function catalog(ref, extra) {
         const key = ref.transportUrl + "|" + ref.type + "|" + ref.id + "|" + JSON.stringify(extra || {});
         if (!catalogCache[key]) {
+            const t0 = Date.now();
             catalogCache[key] = client.catalog(ref, extra);
+            if (!extra)
+                catalogCache[key].then(() => {
+                    perf.catalogs.push({ name: ref.addonName || ref.name, ms: Date.now() - t0 });
+                }, () => {
+                    perf.catalogs.push({ name: (ref.addonName || ref.name) + ", échec", ms: Date.now() - t0 });
+                });
             catalogCache[key].catch(() => { delete catalogCache[key]; });
         }
         return catalogCache[key];
@@ -638,7 +649,9 @@ Item {
                 subtitleTracks: [{ label: "Désactivés", kind: "off" }],
                 startTimeoutMs: p.transcoded ? 60000 : 15000,
                 nextTitle: next ? "S" + next.season + " E" + (next.episode || next.number) + "  ·  " + (next.title || next.name || "") : "",
-                autoNext: settings.autoNext
+                autoNext: settings.autoNext,
+                volume: settings.volume,
+                muted: false
             });
             current.nextVideo = next;
             current.nextPrep = null;
@@ -958,12 +971,99 @@ Item {
     }
 
     // Position de reprise : enregistree regulierement et a l'arret.
-    function savePosition() {
+    function savePosition(atStop) {
         const page = playerLoader.item;
         if (!page || !current || !current.videoId || current.id === "essai" || page.positionMs <= 0)
             return;
         positions = Resume.record(positions, accountId, current.videoId, page.positionMs, page.durationMs, Date.now());
         settings.positions = JSON.stringify(positions);
+        trackLibrary(page, atStop);
+    }
+
+    // ===================== Bibliotheque (« Continuer a regarder ») =====================
+
+    property var libraryItems: []        // LibraryItem du compte, ou copie locale sans compte
+    property var libraryPending: ({})    // elements a envoyer au compte (echec reseau : nouvel essai)
+    property var libraryTrack: null      // { videoId, pos, at } : dernier point de suivi
+    property real libraryPushedAt: 0
+
+    function localLibrary() {
+        try {
+            const list = JSON.parse(settings.localLibrary || "[]");
+            return Array.isArray(list) ? list : [];
+        } catch (e) {
+            return [];
+        }
+    }
+
+    function libraryRows() {
+        return {
+            continue: Account.continueWatching(libraryItems).map(Account.toMeta),
+            library: Account.library(libraryItems).map(Account.toMeta)
+        };
+    }
+
+    // Progression ecrite comme Stremio : localement a chaque point (15 s), vers le compte toutes
+    // les 2 min et a l'arret. Temps regarde : avance de la position, plafonnee par le temps ecoule
+    // (un saut en avant ne compte pas comme regarde).
+    function trackLibrary(page, atStop) {
+        const now = Date.now();
+        const meta = current.meta || { id: current.id, type: current.type, name: "" };
+        const t = libraryTrack;
+        const watched = t && t.videoId === current.videoId
+            ? Math.max(0, Math.min(page.positionMs - t.pos, now - t.at + 2000)) : 0;
+        libraryTrack = { videoId: current.videoId, pos: page.positionMs, at: now };
+        const before = libraryItems.find(i => i._id === current.id)
+            || Library.fromMeta({ id: current.id, type: current.type, name: meta.name, poster: meta.poster,
+                                  posterShape: meta.posterShape }, now);
+        // Film : l'identifiant de la video est celui du film (comme Stremio).
+        const item = Library.updateProgress(before, current.videoId, page.positionMs, page.durationMs, watched, now);
+        libraryItems = Library.upsert(libraryItems, item);
+        if (!authKey) {
+            settings.localLibrary = JSON.stringify(Library.trimLocal(libraryItems));
+        } else {
+            const pending = Object.assign({}, libraryPending);
+            pending[item._id] = item;
+            libraryPending = pending;
+            if (atStop || now - libraryPushedAt > 120000)
+                pushLibrary();
+        }
+        if (atStop) {
+            libraryTrack = null;
+            refreshContinueRow();
+        }
+    }
+
+    function pushLibrary() {
+        const items = Object.keys(libraryPending).map(k => libraryPending[k]);
+        if (!items.length || !authKey)
+            return;
+        libraryPushedAt = Date.now();
+        const sent = libraryPending;
+        account.libraryPut(authKey, items).then(() => {
+            // Seuls les elements envoyes sont retires (d'autres ont pu arriver entre-temps).
+            const rest = Object.assign({}, libraryPending);
+            Object.keys(sent).forEach(k => { if (rest[k] === sent[k]) delete rest[k]; });
+            libraryPending = rest;
+            log("compte : progression envoyée (" + items.length + ")");
+        }).catch(e => log("compte : progression non envoyée (" + e.message + "), nouvel essai plus tard"));
+    }
+
+    // Rangee « Continuer a regarder » de l'accueil recreee avec la bibliotheque a jour.
+    function refreshContinueRow() {
+        localRows = libraryRows();
+        let i = -1;
+        for (let k = 0; k < rowsModel.count; k++) {
+            if (rowsModel.get(k).kind === "continue")
+                i = k;
+        }
+        if (i !== -1)
+            rowsModel.remove(i);
+        if (!localRows.continue.length)
+            return;
+        const at = rowsModel.count && rowsModel.get(0).kind === "link" ? 1 : 0;
+        rowsModel.insert(i !== -1 ? i : at, { kind: "continue", transportUrl: "", addonName: "Compte", type: "", cid: "",
+                                              name: "Continuer à regarder" });
     }
 
     function playbackFailed(reason) {
@@ -1005,7 +1105,7 @@ Item {
         prefetchWaiting = false;
         if (current)
             current.prefetch = null;           // l'agent arrete seul un prechargement abandonne
-        savePosition();
+        savePosition(true);
         if (playerLoader.item)
             playerLoader.item.stop();
         playerLoader.source = "";
@@ -1030,19 +1130,70 @@ Item {
 
     // ===================== Recherche =====================
 
+    // Resultats affiches au fur et a mesure des reponses (un addon lent ne bloque plus les autres),
+    // dans l'ordre des addons. Pendant que l'utilisateur parcourt les resultats, la liste n'est
+    // completee qu'a la fin (sinon la selection repartirait en haut).
     function runSearch(text) {
         const refs = Addons.searchCatalogs(addons);
-        search.status = "Recherche…";
         const token = {};
         search.token = token;
-        Promise.all(refs.map(ref => client.catalog(ref, { search: text })
-            .then(metas => ({ title: ref.name + " · " + typeLabel(ref.type), metas: metas }), () => null)))
-            .then(groups => {
+        const groups = refs.map(() => null);
+        const started = Date.now();
+        const times = [];
+        let answered = 0;
+        const show = () => {
+            const list = groups.filter(g => g && g.metas.length);
+            if (!search.resultsFocused || answered === refs.length)
+                search.results = list;
+            search.status = answered < refs.length
+                ? (list.length ? "" : "Recherche… (" + answered + "/" + refs.length + " addons)")
+                : list.length ? "" : "Aucun résultat pour « " + text + " »";
+        };
+        show();
+        refs.forEach((ref, i) => {
+            const t0 = Date.now();
+            client.catalog(ref, { search: text }).then(metas => metas, () => []).then(metas => {
                 if (search.token !== token)
                     return;
-                search.results = groups.filter(g => g && g.metas.length);
-                search.status = search.results.length ? "" : "Aucun résultat pour « " + text + " »";
+                times.push({ name: ref.addonName || ref.name, ms: Date.now() - t0 });
+                groups[i] = { title: ref.name + " · " + typeLabel(ref.type), metas: metas };
+                answered++;
+                show();
+                if (answered === refs.length) {
+                    const slowest = times.slice().sort((a, b) => b.ms - a.ms)[0];
+                    perf.search = { ms: Date.now() - started, slowest: slowest ? slowest.name + " " + fmtSeconds(slowest.ms) : "" };
+                    log("recherche : " + fmtSeconds(perf.search.ms) + " (plus lent : " + perf.search.slowest + ")");
+                    refreshSettingsRows();
+                }
             });
+        });
+    }
+
+    // ===================== Mesures de vitesse (Reglages > Diagnostic) =====================
+
+    // startedAt : lancement ; addonsMs : addons charges ; catalogs : [{ name, ms }] des rangees.
+    property var perf: ({ startedAt: Date.now(), addonsMs: 0, catalogs: [], search: null })
+
+    function fmtSeconds(ms) {
+        return (ms / 1000).toFixed(1).replace(".", ",") + " s";
+    }
+
+    function perfRows() {
+        const rows = [];
+        const s = "Diagnostic (vitesse)";
+        rows.push({ section: s, key: "perfAddons", label: "Lancement → addons chargés", action: "info",
+                    value: perf.addonsMs ? fmtSeconds(perf.addonsMs) : "—" });
+        const c = perf.catalogs;
+        if (c.length) {
+            const slowest = c.slice().sort((a, b) => b.ms - a.ms)[0];
+            const avg = c.reduce((t, x) => t + x.ms, 0) / c.length;
+            rows.push({ section: s, key: "perfCatalogs", label: "Rangées de l'accueil (" + c.length + ")", action: "info",
+                        value: "moyenne " + fmtSeconds(avg) + "  ·  plus lente " + fmtSeconds(slowest.ms) + " (" + slowest.name + ")" });
+        }
+        if (perf.search)
+            rows.push({ section: s, key: "perfSearch", label: "Dernière recherche", action: "info",
+                        value: fmtSeconds(perf.search.ms) + "  ·  plus lent : " + perf.search.slowest });
+        return rows;
     }
 
     // ===================== Compte =====================
@@ -1159,6 +1310,7 @@ Item {
             { section: "Essais « zéro PC » (V2.1)", key: "trialFbxAuth", label: settings.fbxAppToken ? "Freebox Server : appli autorisée" : "Autoriser l'appli sur la Freebox Server",
               value: settings.fbxAppToken ? "Refaire" : "Autoriser", action: "button" },
             { section: "Essais « zéro PC » (V2.1)", key: "trialFbxDownloads", label: "Lire l'aperçu du dernier téléchargement de la Server", value: "Lire", action: "button" });
+        perfRows().forEach(r => rows.push(r));
         modules.forEach(m => rows.push({ section: "Diagnostic (modules de la box)", key: "module", label: m.name, action: "info",
                                          value: m.ok ? "présent" : "absent", tone: m.ok ? "ok" : "" }));
         settingsPage.setRows(rows);
@@ -1314,6 +1466,12 @@ Item {
     }
     property bool measuring: false
 
+    Timer {
+        id: measureDelay
+        interval: 45000
+        onTriggered: if (app.screen !== "player") app.measureLinks()
+    }
+
     // ===================== Interface =====================
 
     Settings {
@@ -1337,6 +1495,8 @@ Item {
         property string pcId: ""
         property string pcName: ""
         property bool accountOffered: false
+        property real volume: 1.0          // volume du lecteur (le volume du Player ne s'y applique pas)
+        property string localLibrary: "[]" // sans compte : « Continuer a regarder » (LibraryItem)
         property string pcMode: "auto"     // auto : PC utilise s'il repond ; off : jamais
         property string fbxAppToken: ""    // jeton Freebox OS (essais V2.1), jamais dans les journaux
     }
@@ -1499,6 +1659,7 @@ Item {
                 item.subtitleChosen.connect(index => app.chooseSubtitle(index, false));
                 item.nextRequested.connect(() => Qt.callLater(app.playNext));
                 item.skipBuffering.connect(app.skipBuffering);
+                item.volumeAdjusted.connect(v => { settings.volume = v; });
                 app.applySubtitles();
             }
         }

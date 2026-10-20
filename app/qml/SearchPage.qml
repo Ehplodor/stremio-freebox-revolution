@@ -8,6 +8,7 @@ FocusScope {
 
     property string query: ""
     property var results: []             // [{ title, metas }]
+    readonly property bool resultsFocused: resultsView.activeFocus
     property string status: ""
     property string companion: ""
     property var progressOf: null
@@ -55,15 +56,26 @@ FocusScope {
         color: T.surface
         border.color: keyboard.activeFocus ? T.accent : T.line
         border.width: 2
-        Text {
-            anchors { left: parent.left; leftMargin: 24; verticalCenter: parent.verticalCenter }
-            text: "⌕"
-            color: T.textMuted
-            font.pixelSize: 26
+        Canvas {
+            // Loupe dessinee (le caractere ⌕ manque a la police du Player)
+            anchors { left: parent.left; leftMargin: 22; verticalCenter: parent.verticalCenter }
+            width: 24
+            height: 24
+            onPaint: {
+                const c = getContext("2d");
+                c.reset();
+                c.strokeStyle = T.textMuted;
+                c.lineWidth = 2.5;
+                c.beginPath();
+                c.arc(10, 10, 7, 0, 2 * Math.PI);
+                c.moveTo(15, 15);
+                c.lineTo(22, 22);
+                c.stroke();
+            }
         }
         Text {
             anchors { left: parent.left; leftMargin: 58; right: parent.right; rightMargin: 20; verticalCenter: parent.verticalCenter }
-            text: page.query ? page.query + "▏" : "Titre, acteur…"
+            text: page.query ? page.query + "|" : "Titre, acteur…"
             color: page.query ? T.text : T.textDim
             font.pixelSize: T.fontBody + 2
             elide: Text.ElideLeft
@@ -93,12 +105,48 @@ FocusScope {
                 readonly property bool focused: keyboard.activeFocus && keyboard.currentIndex === index
                 color: focused ? T.text : T.surface
                 Behavior on color { ColorAnimation { duration: 90 } }
+                // Espace et retour arriere dessines : les caracteres ␣ et ⌫ manquent a la police du Player.
                 Text {
                     anchors.centerIn: parent
-                    text: modelData === "ESPACE" ? "␣" : modelData === "EFFACER" ? "✕" : modelData
+                    visible: modelData !== "ESPACE" && modelData !== "⌫"
+                    text: modelData === "EFFACER" ? "✕" : modelData
                     color: parent.focused ? T.bg : T.text
                     font.pixelSize: T.fontBody
                     font.bold: true
+                }
+                Item {
+                    // Espace : crochet ouvert vers le haut
+                    visible: modelData === "ESPACE"
+                    anchors.centerIn: parent
+                    width: 26
+                    height: 10
+                    readonly property color ink: parent.focused ? T.bg : T.text
+                    Rectangle { anchors { left: parent.left; right: parent.right; bottom: parent.bottom } height: 3; color: parent.ink }
+                    Rectangle { anchors { left: parent.left; top: parent.top; bottom: parent.bottom } width: 3; color: parent.ink }
+                    Rectangle { anchors { right: parent.right; top: parent.top; bottom: parent.bottom } width: 3; color: parent.ink }
+                }
+                Canvas {
+                    // Retour arriere : etiquette pointant a gauche, avec une croix
+                    id: backspaceIcon
+                    visible: modelData === "⌫"
+                    anchors.centerIn: parent
+                    width: 30
+                    height: 20
+                    readonly property color ink: parent.focused ? T.bg : T.text
+                    onInkChanged: requestPaint()
+                    onPaint: {
+                        const c = getContext("2d");
+                        c.reset();
+                        c.strokeStyle = ink;
+                        c.lineWidth = 2.5;
+                        c.lineJoin = "round";
+                        c.beginPath();
+                        c.moveTo(2, 10); c.lineTo(10, 2); c.lineTo(28, 2); c.lineTo(28, 18); c.lineTo(10, 18); c.closePath();
+                        c.stroke();
+                        c.beginPath();
+                        c.moveTo(15, 6); c.lineTo(23, 14); c.moveTo(23, 6); c.lineTo(15, 14);
+                        c.stroke();
+                    }
                 }
             }
         }
@@ -130,7 +178,7 @@ FocusScope {
     Text {
         anchors { left: field.left; top: keyboard.bottom; topMargin: 6 }
         width: 420
-        text: "OK : taper · ⌫ : effacer · → : résultats"
+        text: "OK : taper · chiffres : saisie directe · → : résultats"
         color: T.textDim
         font.pixelSize: T.fontTiny
     }

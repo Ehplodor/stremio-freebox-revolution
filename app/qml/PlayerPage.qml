@@ -12,6 +12,11 @@ FocusScope {
     property string source: ""
     property var cues: []
     property bool osd: true
+    // Volume propre au lecteur : le volume du Player (touches +/- de la telecommande) ne
+    // s'applique pas a QtMultimedia. Touches volume si elles arrivent jusqu'a l'appli, sinon 2 / 8.
+    property real volume: 1.0
+    property bool muted: false
+    signal volumeAdjusted(real volume, bool muted)
     property var audioTracks: []         // [{ label }]
     property int audioIndex: 0
     property bool audioSwitchable: false // seulement en transcodage (piste choisie par le compagnon)
@@ -147,7 +152,14 @@ FocusScope {
         // Position mise a jour toutes les 200 ms (1 s par defaut) : sinon les sous-titres
         // apparaissent et disparaissent jusqu'a une seconde en retard. Affecte au demarrage
         // seulement si la propriete existe, pour ne pas casser le chargement de la page.
-        Component.onCompleted: if ("notifyInterval" in player) player.notifyInterval = 200
+        Component.onCompleted: {
+            if ("notifyInterval" in player)
+                player.notifyInterval = 200;
+            // Role « video » : peut relier le son au volume general du Player (selon le moteur).
+            if ("audioRole" in player && MediaPlayer.VideoRole !== undefined)
+                player.audioRole = MediaPlayer.VideoRole;
+        }
+        volume: page.muted ? 0 : page.volume
         onStatusChanged: {
             page.logMessage("lecteur : " + page.statusName(status));
             if (status === MediaPlayer.EndOfMedia) {
@@ -588,6 +600,62 @@ FocusScope {
         }
     }
 
+    // Volume en paliers de 10 % ; affiche quelques secondes en haut de l'ecran.
+    function changeVolume(step) {
+        if (step === 0) {
+            muted = !muted;
+        } else {
+            muted = false;
+            volume = Math.max(0, Math.min(1, Math.round((volume + step) * 10) / 10));
+        }
+        volumeAdjusted(volume, muted);
+        volumeHint.show();
+        logMessage("volume " + (muted ? "coupé" : Math.round(volume * 100) + " %"));
+    }
+
+    Rectangle {
+        id: volumeHint
+        function show() {
+            opacity = 1;
+            volumeHideTimer.restart();
+        }
+        anchors { horizontalCenter: parent.horizontalCenter; top: parent.top; topMargin: 60 }
+        width: 420
+        height: 64
+        radius: 32
+        color: Qt.rgba(0.07, 0.09, 0.13, 0.92)
+        border.color: T.accent
+        opacity: 0
+        visible: opacity > 0 && !menu.visible
+        Behavior on opacity { NumberAnimation { duration: 200 } }
+        Text {
+            id: volumeLabel
+            x: 28
+            anchors.verticalCenter: parent.verticalCenter
+            text: page.muted ? "Son coupé" : "Volume " + Math.round(page.volume * 100) + " %"
+            color: T.text
+            font.pixelSize: T.fontSmall + 1
+            font.bold: true
+        }
+        Rectangle {
+            anchors { left: volumeLabel.right; leftMargin: 20; right: parent.right; rightMargin: 28; verticalCenter: parent.verticalCenter }
+            height: 8
+            radius: 4
+            color: Qt.rgba(1, 1, 1, 0.15)
+            Rectangle {
+                height: parent.height
+                radius: 4
+                width: parent.width * (page.muted ? 0 : page.volume)
+                color: T.accent
+            }
+        }
+        Timer {
+            id: volumeHideTimer
+            interval: 2500
+            onTriggered: volumeHint.opacity = 0
+        }
+    }
+
     Timer {
         id: osdTimer
         interval: 4000
@@ -670,6 +738,21 @@ FocusScope {
         case Qt.Key_Menu:
             menu.open();
             break;
+        case Qt.Key_VolumeUp:
+        case Qt.Key_2:
+            page.changeVolume(0.1);
+            event.accepted = event.key === Qt.Key_2;
+            return;
+        case Qt.Key_VolumeDown:
+        case Qt.Key_8:
+            page.changeVolume(-0.1);
+            event.accepted = event.key === Qt.Key_8;
+            return;
+        case Qt.Key_VolumeMute:
+        case Qt.Key_0:
+            page.changeVolume(0);
+            event.accepted = event.key === Qt.Key_0;
+            return;
         case Qt.Key_4:
             page.shiftSubtitles(-250);
             event.accepted = true;

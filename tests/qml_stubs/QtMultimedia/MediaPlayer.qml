@@ -11,6 +11,7 @@ QtObject {
     property bool seekable: false
     property string errorString: ""
     property int notifyInterval: 1000
+    property real volume: 1.0
     signal error(int error, string errorString)
     function play() {}
     function pause() {}
