@@ -10,7 +10,10 @@ Double-cliquer sur **`Lancer-Stremio-Freebox.bat`** (racine du depot). Il :
    identite du PC ;
 4. cherche le **Player** en mode developpeur et y affiche l'appli.
 
-La fenetre doit rester ouverte pendant le visionnage. Options :
+La fenetre doit rester ouverte pendant le visionnage. Appli fermee sur la tele : touche Entree dans la
+fenetre, ou depuis un telephone sur le meme Wi-Fi, la page **`http://<IP-du-PC>:11480/tele`** (adresse
+affichee par le lanceur) et son bouton « Afficher sur la tele ». Astuce : l'ajouter a l'ecran d'accueil
+du telephone. Options :
 
 | Option | Effet |
 |---|---|

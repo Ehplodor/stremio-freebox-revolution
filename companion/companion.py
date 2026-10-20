@@ -623,6 +623,48 @@ def keep_awake_loop():
         time.sleep(20)
 
 
+TELE_PAGE = """<!doctype html>
+<html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Revo Stream</title>
+<style>
+  body { margin: 0; min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+         justify-content: center; gap: 20px; padding: 16px; box-sizing: border-box;
+         background: #0f141c; color: #e8edf5; font: 17px system-ui, sans-serif; text-align: center; }
+  h1 { font-size: 22px; margin: 0; }
+  button { width: 100%%; max-width: 360px; padding: 22px; font-size: 20px; font-weight: 600;
+           border: 0; border-radius: 14px; background: #e5484d; color: white; }
+  button:disabled { opacity: .6; }
+  #msg { min-height: 48px; color: #a9b4c4; max-width: 360px; }
+</style></head><body>
+<h1>Revo Stream &middot; %(pc)s</h1>
+<button id="b" onclick="go()">Afficher sur la t&eacute;l&eacute;</button>
+<div id="msg">%(state)s</div>
+<script>
+function go() {
+  var b = document.getElementById("b"), m = document.getElementById("msg");
+  b.disabled = true; m.textContent = "Lancement sur la t\\u00e9l\\u00e9\\u2026";
+  fetch("/fbx/api/show-on-tv", { method: "POST" }).then(function (r) { return r.json(); })
+    .then(function (d) { m.textContent = d.message; })
+    .catch(function () { m.textContent = "PC injoignable : le lanceur est-il ouvert ?"; })
+    .then(function () { b.disabled = false; });
+}
+</script></body></html>
+"""
+
+
+def tele_page(handler):
+    """Page pour telephone : un bouton qui affiche l'appli sur la tele (sans toucher au PC)."""
+    state = ("Player : %s" % handler.player if handler.player
+             else "Le lanceur n'a pas trouve le Player (allume, mode developpeur ?)")
+    html = TELE_PAGE % {"pc": html_escape(handler.config.get("pcName", "")), "state": html_escape(state)}
+    send_text(handler, 200, html, "text/html; charset=utf-8")
+
+
+def html_escape(text):
+    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def agent_route(handler, method):
     path = handler.path.split("?", 1)[0]
     if path == "/fbx/api/keepalive":
@@ -670,6 +712,15 @@ def agent_route(handler, method):
                     size -= 65536
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 pass
+    elif path == "/fbx/tele":
+        tele_page(handler)
+    elif path == "/fbx/api/show-on-tv" and method == "POST":
+        # Rappel fourni par le lanceur (tools/launcher.py) : debug_qml_app sur le Player.
+        if not handler.show_on_tv:
+            send_json(handler, 503, {"ok": False, "message": "Lanceur sans Player : relancez Lancer-Stremio-Freebox"})
+            return
+        ok, message = handler.show_on_tv()
+        send_json(handler, 200 if ok else 502, {"ok": ok, "message": message})
     elif path == "/fbx/api/start-stremio" and method == "POST":
         ok, message = start_stremio(handler.stremio)
         send_json(handler, 200 if ok else 503, {"ok": ok, "message": message})
@@ -692,9 +743,13 @@ class CompanionHandler(http.server.BaseHTTPRequestHandler):
     config = {"pcId": "", "pcName": ""}
     test_addon = ""
     quiet = False
+    player = ""                 # adresse du Player trouvee par le lanceur
+    show_on_tv = None           # rappel du lanceur : () -> (ok, message)
 
     def do_GET(self):
         note_activity(self)
+        if self.path.split("?", 1)[0] in ("/tele", "/tv"):
+            self.path = "/fbx/tele"            # adresse courte a taper sur le telephone
         if self.path.startswith("/fbx/"):
             return agent_route(self, "GET")
         if self.path.startswith("/image?"):

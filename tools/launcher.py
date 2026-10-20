@@ -274,11 +274,20 @@ def main():
         check_capacity(cfg, stremio, args)
     if player and pc_ip:
         launch_on_player(player, pc_ip, args.port, stop)
+        if port_state == "free":
+            # Bouton du telephone (http://<PC>:11480/tele) : meme lancement que la touche Entree.
+            def show_on_tv():
+                path = launch_on_player(player, pc_ip, args.port, stop)
+                return (True, "Appli affichee sur la tele") if path else \
+                    (False, "Le Player refuse le lancement (allume ? mode developpeur actif ?)")
+            companion.CompanionHandler.player = player
+            companion.CompanionHandler.show_on_tv = staticmethod(show_on_tv)
 
     print("\nTout est pret. Laissez cette fenetre ouverte pendant que vous regardez.")
     print("Sur la tele : l'appli se connecte toute seule a \"%s\"." % cfg["pcName"])
     if player and pc_ip:
-        print("Appli fermee sur la tele ? Appuyez sur Entree ici pour la reafficher.")
+        print("Appli fermee sur la tele ? Appuyez sur Entree ici pour la reafficher,")
+        print("ou depuis le telephone (meme Wi-Fi) : http://%s:%d/tele" % (pc_ip, args.port))
     print("Ctrl+C pour arreter.\n")
     warned = False
     last_check = time.time()
