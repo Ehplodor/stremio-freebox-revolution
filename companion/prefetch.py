@@ -39,6 +39,7 @@ class Prefetch:
         self.base = 0                     # debut de la partie prechargee (reprise en cours de film)
         self.end = 0                      # fin (exclue) de la partie prechargee contigue
         self.rate = 0.0                   # debit lisse (octets/s)
+        self.peak = 0.0                   # meilleur debit soutenu (apres 20 s de telechargement)
         self.done = False
         self.error = ""
         self.cancelled = False
@@ -139,6 +140,7 @@ class Prefetch:
                     if rsp.status == 200 and self.end > 0:
                         raise OSError("la source n'accepte pas les reprises")
                     tries = 0
+                    opened = time.time()
                     window_start, window_bytes = time.time(), 0
                     while not self.cancelled and self.rebase_to is None:
                         if time.time() - self.last_access > IDLE_STOP:
@@ -158,6 +160,8 @@ class Prefetch:
                                 inst = window_bytes / elapsed
                                 self.rate = inst if not self.rate else 0.7 * self.rate + 0.3 * inst
                                 window_start, window_bytes = time.time(), 0
+                                if time.time() - opened >= 20:
+                                    self.peak = max(self.peak, self.rate)
                             self.cond.notify_all()
                         if self.max_bytes and self.end - self.base >= self.max_bytes:
                             break
@@ -268,6 +272,12 @@ class Manager:
         """Debit Internet observe en ce moment par les prechargements actifs (0 si aucun)."""
         rates = [i.rate for i in self.items.values() if i.thread.is_alive() and i.rate > 0]
         return round(sum(rates) * 8 / 1e6, 1) if rates else 0.0
+
+    def best_mbps(self):
+        """Meilleur debit Internet soutenu observe par les prechargements (Mbit/s)."""
+        # Hors sources locales (addon de test) : elles ne disent rien de la connexion Internet.
+        peaks = [i.peak for i in self.items.values() if not i.url.startswith("http://127.")]
+        return round(max(peaks) * 8 / 1e6, 1) if peaks else 0.0
 
     def cleanup(self, max_bytes=None, max_age=None):
         """Supprime des fichiers de CE cache : trop vieux, ou les plus anciens si trop gros."""

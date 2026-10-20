@@ -155,7 +155,11 @@ def start_test_addon():
         return ""
     import functools
     handler = functools.partial(test_addon.AddonHandler, directory=media)
-    server = fbx_qml_run.ThreadedHTTPServer(("0.0.0.0", 8235), handler)
+    try:
+        server = fbx_qml_run.ThreadedHTTPServer(("0.0.0.0", 8235), handler)
+    except OSError as e:
+        line(WARN, "Addon de test : port 8235 indisponible (%s)" % e)
+        return ""
     threading.Thread(target=server.serve_forever, daemon=True).start()
     url = "http://%s:8235/manifest.json" % companion.local_ip_towards()
     line(OK, "Addon de test : %s" % url)

@@ -538,6 +538,17 @@ def prefetch_file(handler, item, method):
         pass                              # le lecteur a coupe (saut, arret) : normal
 
 
+def prefetch_allowed(handler, url):
+    """Sources Internet seulement (comme /image) : un appareil du reseau ne doit pas pouvoir faire
+    lire au PC ses services locaux. Exception : l'addon de test du lanceur (127.0.0.1:8235)."""
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme not in ("http", "https"):
+        return False
+    if handler.test_addon and parts.hostname == "127.0.0.1" and parts.port == 8235:
+        return True
+    return is_public_host(parts.hostname or "")
+
+
 def prefetch_route(handler, method):
     parts = handler.path.split("?", 1)[0].strip("/").split("/")   # fbx prefetch [id] [action]
     mgr = prefetch_manager()
@@ -545,6 +556,9 @@ def prefetch_route(handler, method):
         url = query_param(handler.path, "url") or ""
         if not url.startswith(("http://", "https://")):
             handler.send_error(400, "url manquante")
+            return
+        if not prefetch_allowed(handler, url):
+            handler.send_error(403, "adresse non publique refusee")
             return
         try:
             fraction = float(query_param(handler.path, "start") or 0)
@@ -565,7 +579,7 @@ def prefetch_route(handler, method):
         return
     item = mgr.get(parts[2]) if len(parts) >= 3 else None
     source = query_param(handler.path, "u") or ""
-    if not item and len(parts) == 4 and source.startswith(("http://", "https://"))             and prefetch_mod.Prefetch.make_id(source) == parts[2]:
+    if not item and len(parts) == 4 and prefetch_allowed(handler, source)             and prefetch_mod.Prefetch.make_id(source) == parts[2]:
         try:
             fraction = float(query_param(handler.path, "s") or 0)
         except ValueError:
@@ -619,12 +633,21 @@ def agent_route(handler, method):
         return
     if path == "/fbx/api/status":
         cfg = handler.config
+        # Debit Internet du PC : la mesure hebdomadaire (un seul telechargement) le sous-estime
+        # souvent ; le meilleur debit soutenu des vrais prechargements le corrige (a la hausse).
+        stored = load_config()
+        capacity = stored.get("capacity")
+        observed = prefetch_manager().best_mbps()
+        if capacity and observed > (capacity.get("pcInternetMbps") or 0) * 1.1:
+            capacity["pcInternetMbps"] = observed
+            capacity["pcInternetObserved"] = True
+            save_config(stored)
         send_json(handler, 200, {
             "agent": "stremio-fbx", "agentVersion": AGENT_VERSION, "appVersion": app_version(),
             "pcId": cfg["pcId"], "pcName": cfg["pcName"], "ip": local_ip_towards(),
             "stremio": stremio_status(handler.stremio),
             # Capacites mesurees (tools/launcher.py) : vitesse de conversion, debit Internet.
-            "capacity": load_config().get("capacity"),
+            "capacity": capacity,
             "liveInternetMbps": prefetch_manager().live_mbps(),
             "testAddon": handler.test_addon or None,
         })
