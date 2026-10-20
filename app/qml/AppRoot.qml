@@ -501,7 +501,7 @@ Item {
             return {
                 url: p.transcoded ? Playback.hlsUrl(playCfg, cached, !!forceTranscoding) : cached,
                 mediaUrl: cached,
-                prefetch: { id: st.id, durationMs: durationMs, startAtMs: startAtMs, mode: "start",
+                prefetch: { id: st.id, statusUrl: st.statusUrl, durationMs: durationMs, startAtMs: startAtMs, mode: "start",
                             targetS: 0, started: Date.now(), skipUntil: 0 }
             };
         }).catch(e => {
@@ -558,7 +558,7 @@ Item {
         maybePrepareNext(page);
         if (!pf)
             return;
-        Http.fetchJson(cfg.agent + "/fbx/prefetch/" + pf.id + "/status").then(st => {
+        Http.fetchJson(cfg.agent + pf.statusUrl).then(st => {
             if (current.prefetch !== pf || playerLoader.item !== page)
                 return;
             page.bufferedFrom = st.total ? st.base / st.total : 0;
@@ -1143,6 +1143,15 @@ Item {
         repeat: true
         running: app.screen === "player"
         onTriggered: savePosition()
+    }
+
+    Timer {
+        // Lecture en cours : le PC ne doit pas se mettre en veille (voir companion.keep_awake_loop).
+        interval: 60000
+        repeat: true
+        triggeredOnStart: true
+        running: app.screen === "player"
+        onTriggered: Http.request("GET", app.cfg.agent + "/fbx/api/keepalive").catch(() => {})
     }
 
     Timer {

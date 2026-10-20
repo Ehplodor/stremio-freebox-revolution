@@ -39,12 +39,13 @@ import socketserver
 import subprocess
 import sys
 import time
+import threading
 import uuid
-
-import prefetch as prefetch_mod
 import urllib.error
 import urllib.parse
 import urllib.request
+
+import prefetch as prefetch_mod
 
 try:
     from PIL import Image
@@ -544,10 +545,21 @@ def prefetch_route(handler, method):
         item = mgr.start(url, fraction, max_mb * 1024 * 1024, max_gb)
         item.wait_total(timeout=20)
         data = item.status()
-        data["fileUrl"] = "/fbx/prefetch/%s/file" % item.id
+        # L'adresse de la source accompagne le fichier : apres un redemarrage de l'agent en pleine
+        # lecture, le prechargement repart tout seul au lieu d'un echec.
+        query = "?" + urllib.parse.urlencode({"u": url, "s": "%.4f" % fraction})
+        data["fileUrl"] = "/fbx/prefetch/%s/file%s" % (item.id, query)
+        data["statusUrl"] = "/fbx/prefetch/%s/status%s" % (item.id, query)
         send_json(handler, 200 if not data["error"] else 502, data)
         return
     item = mgr.get(parts[2]) if len(parts) >= 3 else None
+    source = query_param(handler.path, "u") or ""
+    if not item and len(parts) == 4 and source.startswith(("http://", "https://"))             and prefetch_mod.Prefetch.make_id(source) == parts[2]:
+        try:
+            fraction = float(query_param(handler.path, "s") or 0)
+        except ValueError:
+            fraction = 0.0
+        item = mgr.start(source, fraction, 0, int(handler.config.get("cacheMaxGb") or 15))
     if not item:
         handler.send_error(404, "prechargement inconnu (agent relance ?)")
         return
@@ -559,8 +571,38 @@ def prefetch_route(handler, method):
         handler.send_error(404)
 
 
+# ----- PC eveille pendant la lecture -----
+
+LAST_ACTIVITY = [0.0]          # derniere demande venue du Player (horodatage)
+AWAKE_WINDOW = 180             # secondes sans demande du Player avant de laisser le PC se mettre en veille
+
+
+def note_activity(handler):
+    if not handler.client_address[0].startswith("127."):
+        LAST_ACTIVITY[0] = time.time()
+
+
+def keep_awake_loop():
+    """Windows : empeche la mise en veille automatique tant que le Player utilise l'agent (lecture,
+    navigation), comme le font les lecteurs video. Aucun reglage du systeme n'est modifie : la
+    demande cesse des que le Player se tait, ou a l'arret de l'agent."""
+    import ctypes
+    ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+    kernel = ctypes.windll.kernel32
+    awake = False
+    while True:
+        want = time.time() - LAST_ACTIVITY[0] < AWAKE_WINDOW
+        if want != awake:
+            kernel.SetThreadExecutionState(ES_CONTINUOUS | (ES_SYSTEM_REQUIRED if want else 0))
+            awake = want
+        time.sleep(20)
+
+
 def agent_route(handler, method):
     path = handler.path.split("?", 1)[0]
+    if path == "/fbx/api/keepalive":
+        send_json(handler, 200, {"ok": True})     # le Player lit une video : PC eveille
+        return
     if path.startswith("/fbx/prefetch"):
         prefetch_route(handler, method)
         return
@@ -618,6 +660,7 @@ class CompanionHandler(http.server.BaseHTTPRequestHandler):
     quiet = False
 
     def do_GET(self):
+        note_activity(self)
         if self.path.startswith("/fbx/"):
             return agent_route(self, "GET")
         if self.path.startswith("/image?"):
@@ -627,11 +670,13 @@ class CompanionHandler(http.server.BaseHTTPRequestHandler):
         relay(self, self.stremio, self.path)
 
     def do_HEAD(self):
+        note_activity(self)
         if self.path.startswith("/fbx/"):
             return agent_route(self, "HEAD")
         relay(self, self.stremio, self.path, "HEAD")
 
     def do_POST(self):
+        note_activity(self)
         if self.path.startswith("/fbx/"):
             return agent_route(self, "POST")
         relay(self, self.stremio, self.path, "POST")
@@ -647,7 +692,10 @@ def make_server(port=DEFAULT_PORT, stremio=DEFAULT_STREMIO, test_addon="", quiet
     CompanionHandler.config = load_config()
     CompanionHandler.test_addon = test_addon
     CompanionHandler.quiet = quiet
-    return ThreadedHTTPServer(("0.0.0.0", port), CompanionHandler)
+    server = ThreadedHTTPServer(("0.0.0.0", port), CompanionHandler)
+    if os.name == "nt":
+        threading.Thread(target=keep_awake_loop, daemon=True).start()
+    return server
 
 
 class ThreadedHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):

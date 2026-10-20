@@ -30,7 +30,7 @@ IDLE_STOP = 5 * 60                # plus aucune demande de l'appli (lecture quit
 class Prefetch:
     def __init__(self, url, folder, start_fraction=0.0, max_bytes=0):
         self.url = url
-        self.id = hashlib.sha1(url.encode("utf-8")).hexdigest()[:16]
+        self.id = Prefetch.make_id(url)
         self.path = os.path.join(folder, self.id + ".part")
         self.start_fraction = max(0.0, min(0.98, start_fraction))
         self.max_bytes = max_bytes        # 0 : tout le fichier ; sinon arret apres max_bytes
@@ -44,6 +44,10 @@ class Prefetch:
         self.last_access = time.time()
         self.cond = threading.Condition()
         self.thread = threading.Thread(target=self._run, daemon=True)
+
+    @staticmethod
+    def make_id(url):
+        return hashlib.sha1(url.encode("utf-8")).hexdigest()[:16]
 
     # ----- telechargement -----
 
@@ -179,7 +183,7 @@ class Manager:
 
     def start(self, url, start_fraction=0.0, max_bytes=0, max_cache_gb=15):
         with self.lock:
-            pid = hashlib.sha1(url.encode("utf-8")).hexdigest()[:16]
+            pid = Prefetch.make_id(url)
             item = self.items.get(pid)
             if item and not item.error and not item.cancelled:
                 item.last_access = time.time()
