@@ -11,7 +11,7 @@ function unwrap(response) {
     if (response && response.error)
         throw new Error("API " + response.error.code + " : " + response.error.message);
     if (!response || response.result === undefined)
-        throw new Error("reponse API inattendue");
+        throw new Error("réponse API inattendue");
     return response.result;
 }
 

@@ -665,8 +665,27 @@ def html_escape(text):
     return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def player_log(handler):
+    """Journal envoye par l'appli du Player (sonde des modules...) : logs/player-appli.log.
+    L'appli installee depuis le FreeStore n'a pas de console : c'est sa seule trace sur le PC."""
+    try:
+        length = min(int(handler.headers.get("Content-Length") or 0), 65536)
+        data = json.loads(handler.rfile.read(length).decode("utf-8") or "{}")
+    except (ValueError, OSError):
+        send_json(handler, 400, {"ok": False})
+        return
+    os.makedirs(os.path.join(CONFIG_DIR, "logs"), exist_ok=True)
+    with open(os.path.join(CONFIG_DIR, "logs", "player-appli.log"), "a", encoding="utf-8") as f:
+        f.write("%s %s %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), handler.client_address[0],
+                                json.dumps(data, ensure_ascii=False)))
+    send_json(handler, 200, {"ok": True})
+
+
 def agent_route(handler, method):
     path = handler.path.split("?", 1)[0]
+    if path == "/fbx/api/log" and method == "POST":
+        player_log(handler)
+        return
     if path == "/fbx/api/keepalive":
         send_json(handler, 200, {"ok": True})     # le Player lit une video : PC eveille
         return

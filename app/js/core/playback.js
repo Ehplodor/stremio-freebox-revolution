@@ -90,6 +90,13 @@ function canPlayDirect(probe) {
 //   kind "torrent" : il faut d'abord POST create (create = { url, body }) puis torrentUrl
 //   kind "external": a ouvrir hors de l'appli (externalUrl, YouTube)
 function resolve(stream, settings, seriesInfo) {
+    // Sans PC (pas de serveur Stremio) : ni torrent, ni proxy d'en-tetes.
+    const noServer = !settings.server;
+    if (noServer && (typeof stream.infoHash === "string" && typeof stream.url !== "string"
+                     || typeof stream.url === "string" && stream.url.indexOf("magnet:") === 0))
+        return { kind: "unsupported", reason: "torrent : nécessite le PC" };
+    if (noServer && typeof stream.url === "string" && (stream.behaviorHints || {}).proxyHeaders)
+        return { kind: "unsupported", reason: "en-têtes requis : nécessite le PC" };
     if (typeof stream.url === "string" && stream.url.indexOf("magnet:") === 0) {
         const m = /xt=urn:btih:([a-zA-Z0-9]+)/.exec(stream.url);
         if (!m)
@@ -162,6 +169,9 @@ function plan(stream, settings, transport, seriesInfo, forceTranscoding) {
     const r = resolve(stream, settings, seriesInfo);
     if (r.kind === "external" || r.kind === "unsupported")
         return Promise.resolve(r);
+    // Sans PC : lecture directe, sans analyse (le chien de garde du lecteur detecte un echec).
+    if (!settings.server)
+        return Promise.resolve({ kind: "play", url: r.mediaUrl, mediaUrl: r.mediaUrl, transcoded: false, probe: null });
     const media = r.kind === "torrent"
         ? transport.postJson(r.create.url, r.create.body).then(resp => torrentMediaUrl(settings, r, resp))
         : Promise.resolve(r.mediaUrl);
@@ -179,17 +189,20 @@ function plan(stream, settings, transport, seriesInfo, forceTranscoding) {
 
 // Sous-titres externes (SRT, VTT...) convertis en VTT par le serveur.
 function subtitlesVttUrl(settings, url) {
+    // Sans PC : fichier de l'addon tel quel (vtt.js lit aussi le SRT).
+    if (!settings.server)
+        return url;
     return settings.server + "/subtitles.vtt?" + query([["from", url]]);
 }
 
 // ----- Pistes audio et sous-titres -----
 
 const LANGUAGES = {
-    fre: "Francais", fra: "Francais", fr: "Francais", eng: "Anglais", en: "Anglais",
+    fre: "Français", fra: "Français", fr: "Français", eng: "Anglais", en: "Anglais",
     spa: "Espagnol", es: "Espagnol", ger: "Allemand", deu: "Allemand", de: "Allemand",
     ita: "Italien", it: "Italien", por: "Portugais", pt: "Portugais", jpn: "Japonais", ja: "Japonais",
-    dut: "Neerlandais", nld: "Neerlandais", ara: "Arabe", rus: "Russe", chi: "Chinois", zho: "Chinois",
-    kor: "Coreen", pol: "Polonais", tur: "Turc", swe: "Suedois", dan: "Danois", nor: "Norvegien"
+    dut: "Néerlandais", nld: "Néerlandais", ara: "Arabe", rus: "Russe", chi: "Chinois", zho: "Chinois",
+    kor: "Coréen", pol: "Polonais", tur: "Turc", swe: "Suédois", dan: "Danois", nor: "Norvégien"
 };
 
 function languageName(code) {

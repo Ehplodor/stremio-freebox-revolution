@@ -202,9 +202,9 @@ test("pistes audio et sous-titres", () => {
         { id: 1, track: "subtitle", codec: "hdmv_pgs_subtitle", language: "eng" },
         { id: 2, track: "subtitle", codec: "ass", language: null } ] };
     const audio = playback.audioTracks(probe);
-    assert.deepEqual(plain(audio.map(a => a.label)), ["Francais - Francais 440 Hz (AAC 1 canaux)", "Anglais (AC3 6 canaux)"]);
+    assert.deepEqual(plain(audio.map(a => a.label)), ["Français - Francais 440 Hz (AAC 1 canaux)", "Anglais (AC3 6 canaux)"]);
     const subs = playback.embeddedSubtitles(probe);
-    assert.deepEqual(plain(subs.map(s => s.id + ":" + s.label)), ["0:Francais", "2:Piste 2"], "PGS (image) ignore");
+    assert.deepEqual(plain(subs.map(s => s.id + ":" + s.label)), ["0:Français", "2:Piste 2"], "PGS (image) ignore");
 
     const master = "http://pc:11480/hlsv2/fbx1/master.m3u8?mediaURL=x&maxWidth=1280";
     assert.equal(playback.withAudio(master, 1), master + "&fbxAudio=1");
@@ -249,4 +249,19 @@ test("encodeur materiel : choix et parametre de conversion", () => {
     const url = playback.hlsUrl(Object.assign({ profile: "nvenc-win" }, SETTINGS), "http://x/f.mkv", false);
     assert.match(url, /&profile=nvenc-win$/);
     assert.doesNotMatch(playback.hlsUrl(SETTINGS, "http://x/f.mkv", false), /profile=/);
+});
+
+test("sans PC : lecture directe sans analyse, torrents et proxy refuses, sous-titres tels quels", async () => {
+    const NOPC = { server: "", companion: "", maxWidth: 1280 };
+    const transport = { fetchJson: () => { throw new Error("aucun appel sans PC"); },
+                        postJson: () => { throw new Error("aucun appel sans PC"); } };
+    const p = await playback.plan({ url: "https://cdn/film.mkv" }, NOPC, transport);
+    assert.equal(p.kind, "play");
+    assert.equal(p.url, "https://cdn/film.mkv");
+    assert.equal(p.transcoded, false);
+    assert.equal((await playback.plan({ infoHash: "abc" }, NOPC, transport)).kind, "unsupported");
+    assert.equal((await playback.plan({ url: "magnet:?xt=urn:btih:abc" }, NOPC, transport)).kind, "unsupported");
+    assert.equal(playback.resolve({ url: "https://x/y", behaviorHints: { proxyHeaders: { request: {} } } }, NOPC).kind,
+                 "unsupported");
+    assert.equal(playback.subtitlesVttUrl(NOPC, "http://x/a.srt"), "http://x/a.srt");
 });

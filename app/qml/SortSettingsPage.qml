@@ -40,7 +40,7 @@ FocusScope {
         anchors { left: header.left; top: header.bottom; topMargin: 8 }
         color: T.textMuted
         font.pixelSize: 18
-        text: "Gauche/Droite : changer (critere ou addon : le monter ou le descendre) · OK : basculer · Retour : fermer"
+        text: "Gauche/Droite : changer (critère ou addon : le monter ou le descendre) · OK : basculer · Retour : fermer"
     }
 
     ListView {

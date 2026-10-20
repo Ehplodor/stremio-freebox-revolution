@@ -13,7 +13,7 @@ FocusScope {
     property var streams: []         // [{ addon, stream, badges }]
     property string streamsStatus: ""
     property string selectedTitle: ""     // episode choisi (series)
-    property string resumeText: ""        // "Reprendre a 12:34" si une position existe
+    property string resumeText: ""        // "Reprendre à 12:34" si une position existe
     property bool showingSources: false
     property var progressOf: null         // function(videoId) -> 0..1
     signal episodeChosen(var video)
@@ -346,7 +346,7 @@ FocusScope {
             }
             Text {
                 anchors { top: thumb.bottom; topMargin: 12; left: thumb.left; right: thumb.right }
-                text: modelData.title || modelData.name || ("Episode " + (modelData.episode || modelData.number))
+                text: modelData.title || modelData.name || ("Épisode " + (modelData.episode || modelData.number))
                 color: parent.focused ? T.text : T.textMuted
                 font.pixelSize: T.fontSmall
                 font.bold: parent.focused
@@ -401,7 +401,7 @@ FocusScope {
                 spacing: 4
                 Text {
                     width: parent.width
-                    text: (index === 0 ? "Recommande  ·  " : "") + (modelData.badges || "") + (modelData.badges ? "   " : "") + modelData.addon
+                    text: (index === 0 ? "Recommandé  ·  " : "") + (modelData.badges || "") + (modelData.badges ? "   " : "") + modelData.addon
                     color: T.text
                     font.pixelSize: T.fontSmall + 1
                     font.bold: index === 0

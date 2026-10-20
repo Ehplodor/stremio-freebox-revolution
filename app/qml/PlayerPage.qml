@@ -34,7 +34,7 @@ FocusScope {
         if (subDelay === 0)
             return "0 s (synchro d'origine)";
         return (subDelay > 0 ? "+" : "-") + (Math.abs(subDelay) / 1000).toFixed(2).replace(".", ",") + " s"
-            + (subDelay > 0 ? "  ·  plus tard" : "  ·  plus tot");
+            + (subDelay > 0 ? "  ·  plus tard" : "  ·  plus tôt");
     }
     signal nextRequested()
     // Prechargement par le PC (pilote par AppRoot) : ecran d'attente et partie prechargee.
@@ -76,7 +76,7 @@ FocusScope {
     function reload(url) {
         resumeAt = player.position;
         startWatchdog.restart();
-        logMessage("rechargement a " + fmt(resumeAt));
+        logMessage("rechargement à " + fmt(resumeAt));
         source = url;
     }
 
@@ -94,7 +94,7 @@ FocusScope {
             const at = resumeAt;
             resumeAt = -1;
             player.seek(at);
-            logMessage("reprise a " + fmt(at));
+            logMessage("reprise à " + fmt(at));
         }
     }
 
@@ -128,7 +128,7 @@ FocusScope {
         id: startWatchdog
         interval: page.startTimeoutMs
         running: page.source !== ""
-        onTriggered: page.fail("pas de lecture apres " + Math.round(interval / 1000) + " s")
+        onTriggered: page.fail("pas de lecture après " + Math.round(interval / 1000) + " s")
     }
 
     // Lecture reellement commencee : la position avance.
@@ -161,7 +161,7 @@ FocusScope {
             page.tryResume();
         }
         onSeekableChanged: page.tryResume()
-        onPlaybackStateChanged: page.logMessage("etat de lecture : " + ["arret", "lecture", "pause"][playbackState])
+        onPlaybackStateChanged: page.logMessage("état de lecture : " + ["arret", "lecture", "pause"][playbackState])
         onError: {
             page.logMessage("lecteur erreur " + error + " : " + errorString);
             page.fail(errorString || "erreur " + error);
@@ -400,7 +400,7 @@ FocusScope {
             anchors { fill: parent; margins: 16 }
             spacing: 6
             Text {
-                text: "Episode suivant dans " + Math.max(0, nextCard.remaining) + " s"
+                text: "Épisode suivant dans " + Math.max(0, nextCard.remaining) + " s"
                 color: T.textMuted
                 font.pixelSize: T.fontSmall
             }
@@ -577,7 +577,7 @@ FocusScope {
         Text {
             id: delayLabel
             anchors.centerIn: parent
-            text: "Sous-titres : " + page.delayText() + "   (4 / 6 · 5 : zero)"
+            text: "Sous-titres : " + page.delayText() + "   (4 / 6 · 5 : zéro)"
             color: T.text
             font.pixelSize: T.fontSmall + 1
         }
@@ -617,7 +617,7 @@ FocusScope {
 
     focus: true
     Keys.onPressed: {
-        logMessage("touche " + event.key + " (etat " + ["arret", "lecture", "pause"][player.playbackState] + ", position " + fmt(player.position) + ")");
+        logMessage("touche " + event.key + " (état " + ["arret", "lecture", "pause"][player.playbackState] + ", position " + fmt(player.position) + ")");
         switch (event.key) {
         case Qt.Key_Return:
         case Qt.Key_Enter:

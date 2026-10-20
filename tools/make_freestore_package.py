@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Fabrique le paquet FreeStore du lanceur du Player (bootstrap/) : dist/<nom>-<version>.tar.gz
+"""Fabrique le paquet FreeStore : dist/<nom>-<version>.tar.gz
+
+Par defaut l'appli entiere (app/, option B du plan V2 : fonctionne sans PC). Le lanceur de la V1
+(bootstrap/, qui charge l'appli depuis le PC) reste disponible : --source bootstrap.
 
 Meme format que "Make FreeStore Package" du plugin Qt Creator de Free (fbx/freebox-qtcreator-plugin,
 src/freestorepackager.cc) : archive tar gzippee des fichiers du projet, manifest.json a la racine,
@@ -7,6 +10,7 @@ avec les memes verifications du manifest (identifiant, points d'entree, fichiers
 Le paquet s'envoie ensuite sur https://factory.free.fr (voir docs/INSTALLATION.md).
 """
 
+import argparse
 import gzip
 import io
 import json
@@ -16,8 +20,7 @@ import sys
 import tarfile
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-SRC = os.path.join(ROOT, "bootstrap")
-EXCLUDE = re.compile(r"(\.fbxproject(\.user)?$|^\.|/\.|__pycache__)")
+EXCLUDE = re.compile(r"(\.fbxproject(\.user)?$|^\.|/\.|__pycache__|(^|/)_obsolete/)")
 
 
 def check_manifest(manifest, files):
@@ -45,6 +48,10 @@ def check_manifest(manifest, files):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Paquet FreeStore (FreeFactory)")
+    parser.add_argument("--source", default="app", help="dossier a empaqueter : app (defaut) ou bootstrap")
+    args = parser.parse_args()
+    SRC = os.path.join(ROOT, args.source)
     files = []
     for folder, _, names in os.walk(SRC):
         for name in names:

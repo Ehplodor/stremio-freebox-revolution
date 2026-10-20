@@ -5,8 +5,8 @@
 
 const CRITERIA = {
     addon: "Addon (ordre choisi ci-dessous)",
-    cached: "En cache chez le debrideur",
-    resolution: "Resolution",
+    cached: "En cache chez le débrideur",
+    resolution: "Résolution",
     language: "Langue",
     direct: "Lisible sans transcodage (H.264)",
     size: "Taille (plus petit d'abord)",
@@ -14,10 +14,10 @@ const CRITERIA = {
 };
 
 const LANGUAGE_PRESETS = [
-    { id: "fr", label: "Francais, multi, puis anglais", order: ["fr", "multi", "en"] },
-    { id: "multi", label: "Multi, francais, puis anglais", order: ["multi", "fr", "en"] },
-    { id: "en", label: "Anglais, multi, puis francais", order: ["en", "multi", "fr"] },
-    { id: "none", label: "Aucune preference", order: [] }
+    { id: "fr", label: "Français, multi, puis anglais", order: ["fr", "multi", "en"] },
+    { id: "multi", label: "Multi, français, puis anglais", order: ["multi", "fr", "en"] },
+    { id: "en", label: "Anglais, multi, puis français", order: ["en", "multi", "fr"] },
+    { id: "none", label: "Aucune préférence", order: [] }
 ];
 
 const DEFAULT_PREFS = {
@@ -102,7 +102,9 @@ function parse(stream) {
 
     info.group = releaseGroup(stream);
     // Torrent : telecharge par le serveur Stremio du PC, la box le lit sur le reseau local.
-    info.torrent = !!stream.infoHash && !stream.url;
+    info.torrent = !!stream.infoHash && !stream.url || /^magnet:/.test(String(stream.url || ""));
+    // En-tetes HTTP imposes : seul le serveur Stremio (proxy) sait les ajouter.
+    info.needsProxy = !!(stream.behaviorHints && stream.behaviorHints.proxyHeaders);
 
     const langs = [];
     Object.keys(FLAGS).forEach(f => { if (text.indexOf(f) !== -1) langs.push(FLAGS[f]); });
@@ -185,6 +187,17 @@ function assess(info, ctx) {
     const mbps = estimateMbps(info, ctx.durationMin);
     const key = codecKey(info);
     const res = info.resolution || 1080;
+    // Sans PC (ctx.pc === false) : seule la lecture directe d'un lien HTTP en H.264 jusqu'au 1080p.
+    if (ctx.pc === false) {
+        if (info.torrent)
+            return { ok: false, mode: "torrent", margin: 0, mbps: mbps, reason: "torrent : nécessite le PC" };
+        if (info.needsProxy)
+            return { ok: false, mode: "proxy", margin: 0, mbps: mbps, reason: "en-têtes requis : nécessite le PC" };
+        if (key && (key !== "h264" || res > 1080))
+            return { ok: false, mode: "convert", margin: 0, mbps: mbps,
+                     reason: (res > 1080 ? res + "p" : info.codec || key) + " : illisible sans PC" };
+        ctx = Object.assign({}, ctx, { prefetch: false, capacity: null });
+    }
     const margins = [];
     const pcNet = ctx.capacity ? ctx.capacity.pcInternetMbps : 0;
     // Prechargement (sources HTTP) : une connexion du PC plus lente que la video donne une attente
@@ -217,7 +230,7 @@ function assess(info, ctx) {
             const m = link / mbps;
             if (m < 1.15)
                 return { ok: false, mode: "direct", margin: m, mbps: mbps,
-                         reason: (viaPc ? "reseau PC → box trop lent (" : "Internet de la box trop lent (")
+                         reason: (viaPc ? "réseau PC → box trop lent (" : "Internet de la box trop lent (")
                                  + Math.round(mbps) + " Mbit/s)" };
             margins.push(m);
         }
@@ -236,7 +249,7 @@ function assess(info, ctx) {
         const factor = best.factor * (1920 * 1080) / pixels;
         if (factor < 1.25)
             return { ok: false, mode: "convert", margin: factor, mbps: mbps,
-                     reason: best.factor ? "trop lourde a convertir pour ce PC" : "conversion impossible sur ce PC" };
+                     reason: best.factor ? "trop lourde à convertir pour ce PC" : "conversion impossible sur ce PC" };
         margins.push(factor / 1.25);
     }
     const slow = pcInternet("convert");
@@ -246,7 +259,7 @@ function assess(info, ctx) {
         const out = (ctx.maxWidth || 1280) >= 1920 ? 7 : 4;
         const m = ctx.boxLinkMbps / out;
         if (m < 1.2)
-            return { ok: false, mode: "convert", margin: m, mbps: mbps, reason: "reseau PC → box trop lent" };
+            return { ok: false, mode: "convert", margin: m, mbps: mbps, reason: "réseau PC → box trop lent" };
         margins.push(m);
     }
     return { ok: true, mode: "convert", margin: margins.length ? Math.min.apply(null, margins) : 99, mbps: mbps,
@@ -256,7 +269,7 @@ function assess(info, ctx) {
 // Raison de masquer un flux selon les preferences, ou "".
 function hiddenReason(info, prefs) {
     if (prefs.maxResolution && info.resolution > prefs.maxResolution)
-        return "resolution " + info.resolution + "p";
+        return "résolution " + info.resolution + "p";
     if (prefs.hideUncached && info.cached === false)
         return "pas en cache";
     if (prefs.hideDolbyVision && info.dv)
@@ -341,7 +354,7 @@ function fitBadge(fit) {
     if (!fit.ok)
         return "  ·  ⚠ " + fit.reason;
     if (fit.margin < 1.5)
-        return "  ·  ⚠ limite pour ce PC/reseau";
+        return "  ·  ⚠ limite pour ce PC/réseau";
     if (fit.waitS > 60)
         return "  ·  attente ~" + Math.round(fit.waitS / 60) + " min";
     return "";
@@ -350,7 +363,7 @@ function fitBadge(fit) {
 function badges(info) {
     const out = [];
     if (info.cached === true) out.push("En cache");
-    if (info.cached === false) out.push("A telecharger");
+    if (info.cached === false) out.push("À télécharger");
     if (info.resolution) out.push(info.resolution >= 2160 ? "4K" : info.resolution + "p");
     if (info.dv) out.push("Dolby Vision");
     else if (info.hdr) out.push("HDR");
@@ -371,19 +384,19 @@ function cycle(list, value, step) {
 // Lignes de l'ecran de reglages : [{ key, label, value }]
 function settingsRows(prefsIn, addonNames) {
     const p = normalize(prefsIn);
-    const rows = p.order.map((c, i) => ({ key: "order:" + c, label: "Critere " + (i + 1), value: CRITERIA[c] }));
+    const rows = p.order.map((c, i) => ({ key: "order:" + c, label: "Critère " + (i + 1), value: CRITERIA[c] }));
     const preset = LANGUAGE_PRESETS.find(x => x.id === p.languages) || LANGUAGE_PRESETS[0];
     rows.push({ key: "languages", label: "Langues", value: preset.label });
-    rows.push({ key: "maxResolution", label: "Resolution maximale", value: p.maxResolution >= 2160 ? "4K (tout)" : p.maxResolution + "p" });
+    rows.push({ key: "maxResolution", label: "Résolution maximale", value: p.maxResolution >= 2160 ? "4K (tout)" : p.maxResolution + "p" });
     rows.push({ key: "hideUncached", label: "Masquer ce qui n'est pas en cache", value: p.hideUncached ? "Oui" : "Non" });
     rows.push({ key: "hideDolbyVision", label: "Masquer Dolby Vision", value: p.hideDolbyVision ? "Oui" : "Non" });
     rows.push({ key: "maxSizeGb", label: "Taille maximale", value: p.maxSizeGb ? p.maxSizeGb + " Go" : "Aucune" });
     rows.push({ key: "hideTiny", label: "Masquer les fichiers trop petits (< 300 Mo)", value: p.hideTiny ? "Oui" : "Non" });
-    rows.push({ key: "hideTooHeavy", label: "Masquer les sources trop lourdes pour ce PC / ce reseau", value: p.hideTooHeavy ? "Oui" : "Non" });
+    rows.push({ key: "hideTooHeavy", label: "Masquer les sources trop lourdes pour ce PC / ce réseau", value: p.hideTooHeavy ? "Oui" : "Non" });
     mergedAddonOrder(p, addonNames).forEach((name, i) => {
         rows.push({ key: "addon:" + name, label: "Addon " + (i + 1), value: name });
     });
-    rows.push({ key: "reset", label: "Revenir aux reglages par defaut", value: "" });
+    rows.push({ key: "reset", label: "Revenir aux réglages par défaut", value: "" });
     return rows;
 }
 

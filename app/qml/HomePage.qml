@@ -132,7 +132,7 @@ FocusScope {
                 spacing: 10
                 Repeater {
                     model: heroInfo.meta ? [heroInfo.meta.releaseInfo, heroInfo.meta.imdbRating ? "★ " + heroInfo.meta.imdbRating : "",
-                                            heroInfo.meta.type === "series" ? "Serie" : heroInfo.meta.type === "movie" ? "Film" : ""]
+                                            heroInfo.meta.type === "series" ? "Série" : heroInfo.meta.type === "movie" ? "Film" : ""]
                                            .concat((heroInfo.meta.genres || []).slice(0, 2)).filter(function (s) { return s; }) : []
                     delegate: Rectangle {
                         height: 28

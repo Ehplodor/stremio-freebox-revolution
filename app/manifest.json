@@ -1,16 +1,20 @@
 {
-    "name": "Revo Stream (dev)",
-    "identifier": "com.ehplodor.revostream.dev",
-    "description": "Client compatible avec les addons Stremio pour le Freebox Player",
+    "name": "Revo Stream",
+    "identifier": "com.ehplodor.revostream",
+    "description": "Films et séries avec vos addons compatibles Stremio, sans PC",
+    "version": "2.1.0",
     "capabilities": {
+        "net_wan": "required",
         "net_lan": "required",
-        "net_wan": "required"
+        "net_gw": "optional",
+        "gw_downloader": "optional",
+        "gw_explorer": "optional"
     },
+    "icon": "icon.png",
     "entryPoints": {
         "main": {
             "file": "main.qml",
             "default": true
         }
-    },
-    "version": "2.0.0"
+    }
 }

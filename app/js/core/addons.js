@@ -204,6 +204,11 @@ function posterFallback(url, companion) {
     return companion && url ? companion + "/image?url=" + encodeURIComponent(url) : "";
 }
 
+// Addon local de Stremio Desktop (fichiers du PC) : joignable seulement par le serveur du PC.
+function isLocalAddon(transportUrl) {
+    return /^https?:\/\/(127\.0\.0\.1|localhost):11470/.test(transportUrl);
+}
+
 // Stremio Desktop declare son addon local sur 127.0.0.1:11470 : depuis le Player, c'est le PC.
 function localToServer(transportUrl, server) {
     return transportUrl.replace(/^https?:\/\/(127\.0\.0\.1|localhost):11470/, server);

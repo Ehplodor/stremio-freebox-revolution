@@ -212,3 +212,25 @@ test("capacites avec prechargement : attente acceptee, reseau local pour la box"
     assert.equal(tor.torrent, true);
     assert.ok(sorting.assess(tor, ctx).ok, "torrent H.264 : reseau PC -> box, pas Internet de la box");
 });
+
+test("sans PC : torrents, en-tetes, HEVC et 4K masques ; H.264 HTTP et inconnu gardes", () => {
+    const noPc = { pc: false, boxInternetMbps: 50, durationMin: 120, prefetch: true };
+    const list = [
+        { addon: "h264", stream: { url: "https://cdn/a.mkv", name: "[AD+] T\n1080p", title: "Film 1080p x264 FRENCH\n💾 4 GB" } },
+        { addon: "hevc", stream: { url: "https://cdn/b.mkv", name: "[AD+] T\n1080p", title: "Film 1080p x265\n💾 2 GB" } },
+        { addon: "h264x10", stream: { url: "https://cdn/c.mkv", name: "T 1080p", title: "Film 1080p x264 10bit" } },
+        { addon: "torrent", stream: { infoHash: "abc", name: "T 1080p", title: "Film 1080p x264" } },
+        { addon: "magnet", stream: { url: "magnet:?xt=urn:btih:abc", title: "Film 720p x264" } },
+        { addon: "proxy", stream: { url: "https://x/y.mp4", title: "Film 720p x264", behaviorHints: { proxyHeaders: { request: { a: "b" } } } } },
+        { addon: "inconnu", stream: { url: "https://cdn/d.mp4", title: "Film" } }
+    ];
+    const r = sorting.sortStreams(list, null, noPc);
+    assert.deepEqual(plain(r.visible.map(x => x.addon)).sort(), ["h264", "inconnu"]);
+    assert.equal(r.heavy, 5);
+    const fit = sorting.assess(sorting.parse(list[0].stream), noPc);
+    assert.equal(fit.mode, "direct");
+    assert.ok(!fit.waitS, "pas de prechargement sans PC");
+    assert.match(sorting.assess(sorting.parse(list[1].stream), noPc).reason, /sans PC/);
+    // Avec un PC (pc absent ou true) : rien ne change.
+    assert.ok(sorting.assess(sorting.parse(list[1].stream), { pc: true }).ok);
+});

@@ -5,8 +5,10 @@
 const AGENT_PORT = 11480;
 const STREMIO_PORT = 11470;
 
-// pcHost : adresse du PC (ex. "192.168.0.16"), tiree de l'URL de chargement.
+// pcHost : adresse du PC (ex. "192.168.0.16") ; "" sans PC (services vides : lecture directe).
 function settingsFor(pcHost) {
+    if (!pcHost)
+        return { pcHost: "", agent: "", server: "", companion: "", maxWidth: 1280 };
     return {
         pcHost: pcHost,
         agent: "http://" + pcHost + ":" + AGENT_PORT,
@@ -35,6 +37,9 @@ const DEFAULT_ADDONS = [
 //            { type: "series", id: "tt5753856", episode: "tt5753856:1:1", noPlay: true }
 // Verification de chargement du lecteur : { loadPlayer: true }
 const AUTOTEST = null;
+
+// Developpement : ignorer tout PC, comme une box seule (tools/fbx_qml_run.py --sans-pc).
+const NO_PC = false;
 
 // Journal de l'element qui a le focus (verification des touches a distance).
 const DEBUG_FOCUS = true;

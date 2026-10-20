@@ -35,23 +35,23 @@ developpeur (`/pub/devel`) ne connait que `debug_qml_app`, un lancement temporai
 
 1. Creer un compte developpeur sur **https://factory.free.fr** (FreeFactory) avec votre compte Free.
 2. Sur le PC : `python tools/make_freestore_package.py` produit `dist/revo-stream-<version>.tar.gz`
-   (meme format que le plugin Qt Creator de Free, memes verifications du manifest).
+   (meme format que le plugin Qt Creator de Free, memes verifications du manifest). Depuis la 2.1.0, c'est
+   **l'appli entiere** (`app/`) : elle fonctionne sans PC. L'ancien lanceur : `--source bootstrap`.
 3. Dans FreeFactory : nouvelle application, envoyer le paquet, ajouter les visuels de `bootstrap/freestore/` (deja aux noms attendus : logo_80/150/220.png, mini_banner.jpg, big_banner.jpg, screenshot1-3.jpg, mini_screenshot1-3.jpg ; captures rendues depuis les vrais ecrans QML),
    publier en **beta** et vous ajouter comme beta-testeur.
 4. L'appli « Revo Stream » apparait dans les applications du Player.
 
-Ce qui est installe sur le Player est seulement le **lanceur** (`bootstrap/`). Il :
+Depuis la 2.1.0, le paquet contient **toute l'appli** : elle demarre sans PC. Sans PC, elle lit en direct
+les liens HTTP en H.264 (addons avec debrideur) et masque le reste (torrents, HEVC, 4K) avec la raison.
+Le PC est facultatif (Reglages > PC) : s'il a deja ete utilise et qu'il repond, l'appli s'en sert pour
+les torrents, la conversion, les pistes audio et le prechargement ; sinon elle continue sans lui.
 
-- retrouve le PC (adresse memorisee, sinon recherche sur le reseau local si l'adresse a change) et le
-  reconnait par son identifiant ; s'il trouve plusieurs PC, il propose le choix ;
-- charge l'appli depuis le PC : chaque mise a jour du depot est disponible sans rien reinstaller ;
-- si le PC ne repond pas, affiche « Pret — en attente du PC » avec les instructions, et reessaie
-  toutes les 10 s.
+Les versions 2.0.x installaient seulement le **lanceur** (`bootstrap/`), qui chargeait l'appli depuis le
+PC ; il reste disponible pour le developpement (`--source bootstrap`).
 
-Points a verifier avec Free : delai et criteres de validation d'une beta privee, et si une appli qui
-charge son interface depuis le reseau local est acceptee.
-
-En attendant, le lanceur du PC affiche directement l'appli sur la tele (mode developpeur).
+Developpement : `python tools/fbx_qml_run.py app/manifest.json` affiche l'appli du depot sur la tele
+(identifiant suffixe `.dev`, reglages separes de l'appli installee) ; `--sans-pc` simule une box seule.
+`python tools/render_screens.py` capture les ecrans sur le PC et signale les textes qui se chevauchent.
 
 ## Lecture fluide
 

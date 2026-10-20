@@ -130,7 +130,7 @@ FocusScope {
     Text {
         anchors { left: field.left; top: keyboard.bottom; topMargin: 6 }
         width: 420
-        text: "OK : taper · ⌫ : effacer · → : resultats"
+        text: "OK : taper · ⌫ : effacer · → : résultats"
         color: T.textDim
         font.pixelSize: T.fontTiny
     }
@@ -139,7 +139,7 @@ FocusScope {
     Text {
         id: header
         anchors { left: field.right; leftMargin: 40; top: parent.top; topMargin: 104 }
-        text: page.status || (page.results.length ? "Resultats pour « " + page.query.trim() + " »" : "Tapez au moins 2 lettres")
+        text: page.status || (page.results.length ? "Résultats pour « " + page.query.trim() + " »" : "Tapez au moins 2 lettres")
         color: T.textMuted
         font.pixelSize: T.fontBody
     }

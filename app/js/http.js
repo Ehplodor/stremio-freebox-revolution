@@ -31,7 +31,7 @@ function request(method, url, body, asText, timeoutMs) {
                 return;
             finished = true;
             xhr.abort();
-            reject(new Error("pas de reponse apres " + timeout / 1000 + " s"));
+            reject(new Error("pas de réponse après " + timeout / 1000 + " s"));
         });
         xhr.onreadystatechange = () => {
             if (xhr.readyState !== XMLHttpRequest.DONE || finished)

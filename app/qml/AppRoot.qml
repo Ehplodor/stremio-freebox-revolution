@@ -13,18 +13,25 @@ import "../js/core/resume.js" as Resume
 import "../js/core/subsegments.js" as SubSeg
 import "../js/core/buffer.js" as Buffer
 
-// Racine de l'appli, chargee depuis l'agent du PC (par le lanceur du Player ou par main.qml).
+// Racine de l'appli, embarquee dans le paquet FreeStore (main.qml) ; aussi chargeable depuis
+// l'agent du PC (lanceur bootstrap/, developpement).
 // Ecrans : accueil, recherche, reglages (barre du haut), fiche, lecteur, compte, tri.
+// Le PC est facultatif : sans lui, lecture directe des liens HTTP H.264 (debrideurs, addons HTTP).
 Item {
     id: app
 
-    // Adresse du PC : fournie par le lanceur, sinon tiree de l'URL de chargement.
-    property string pcHost: Config.hostFromUrl(Qt.resolvedUrl("."))
+    // Adresse du PC : tiree de l'URL de chargement (lanceur, developpement), sinon celle
+    // memorisee. pcHost : PC essaye en dernier ; vide si aucun PC connu.
+    property string launchHost: Config.hostFromUrl(Qt.resolvedUrl("."))
+    property string pcHost: ""
     property var pcInfo: null            // derniere reponse de /fbx/api/status
-    property bool pcOk: true
+    property bool pcOk: false
+    // PC joignable et utilise : sinon tous les services du PC sont vides (lecture directe).
+    readonly property bool pcActive: pcOk && pcInfo !== null && pcHost !== "" && settings.pcMode !== "off"
+    property var modules: []             // sonde des modules de la box : [{ name, ok, error }]
     // Services du PC + qualite de conversion choisie dans les reglages.
     readonly property var cfg: {
-        const c = Config.settingsFor(pcHost);
+        const c = Config.settingsFor(pcActive ? pcHost : "");
         c.maxWidth = settings.maxWidth;
         c.profile = Playback.bestProfile(pcInfo && pcInfo.stremio ? pcInfo.stremio.profiles : [], settings.encoder);
         return c;
@@ -88,7 +95,7 @@ Item {
         try {
             sortPrefs = Sorting.normalize(settings.sortPrefs ? JSON.parse(settings.sortPrefs) : null);
         } catch (e) {
-            log("preferences de tri illisibles, valeurs par defaut");
+            log("préférences de tri illisibles, valeurs par défaut");
         }
         try {
             positions = settings.positions ? JSON.parse(settings.positions) : {};
@@ -97,7 +104,10 @@ Item {
         }
         authKey = settings.authKey || "";
         accountId = settings.accountId || "";
-        log("demarrage n" + settings.launches + ", PC " + pcHost + ", compte " + (authKey ? "lie" : "non lie"));
+        log("démarrage n" + settings.launches + ", PC " + (pcCandidate() || "aucun")
+            + ", compte " + (authKey ? "lie" : "non lié"));
+        readVersion();
+        probeModules();
         checkAccount();
         // Verification de chargement du lecteur, sans lecture (developpement).
         if (Config.AUTOTEST && Config.AUTOTEST.loadPlayer) {
@@ -109,38 +119,121 @@ Item {
             settings.accountOffered = true;
             Qt.callLater(openAccount);
         }
-        // L'agent annonce l'eventuel addon de test : on attend sa reponse avant les addons.
-        checkPc().then(loadAddons, loadAddons);
+        // Aucun ecran n'attend le PC : addons tout de suite, le PC est verifie en parallele
+        // (son eventuel addon de test recharge les addons quand il repond).
+        loadAddons();
+        checkPc();
     }
 
-    // Etat de l'agent du PC : nom affiche, Stremio actif, changement de PC.
+    property string appVersion: "?"
+    // Version de l'appli lue dans son manifest (embarque dans le paquet ou servi par le PC).
+    function readVersion() {
+        Http.fetchJson(Qt.resolvedUrl("../manifest.json")).then(m => {
+            appVersion = m && m.version ? m.version : "?";
+            refreshSettingsRows();
+        }).catch(() => {});
+    }
+
+    // PC a essayer : lanceur / developpement, sinon adresse memorisee.
+    function pcCandidate() {
+        return settings.pcMode === "off" || Config.NO_PC ? "" : (launchHost || settings.pcHost || "");
+    }
+
+    // Etat de l'agent du PC : nom affiche, Stremio actif, changement de PC. Delai court :
+    // une adresse sans machine ne repond jamais.
     function checkPc() {
-        if (!pcHost)
+        const host = pcCandidate();
+        if (!host) {
+            pcHost = "";
+            pcOk = false;
+            pcInfo = null;
+            refreshSettingsRows();
+            refreshStreams();
             return Promise.resolve();
-        return Http.fetchJson(cfg.agent + "/fbx/api/status").then(s => {
-            const was = pcOk;
-            pcOk = true;
+        }
+        return Http.request("GET", Config.settingsFor(host).agent + "/fbx/api/status", undefined, false, 4000).then(s => {
+            if (!s || s.agent !== "stremio-fbx")
+                throw new Error("pas un agent Revo Stream");
+            const was = pcActive;
+            const hadTestAddon = !!(pcInfo && pcInfo.testAddon);
             if (settings.pcId && s.pcId !== settings.pcId)
-                toast("Connecte a un autre PC : " + s.pcName);
-            else if (!was)
-                toast("PC « " + s.pcName + " » de nouveau joignable");
-            // Memorise le PC : le lanceur du Player le retrouve au prochain demarrage.
+                toast("Connecté à un autre PC : " + s.pcName);
+            else if (!was && pcHost)
+                toast("PC « " + s.pcName + " » joignable : conversion et torrents disponibles");
+            // Memorise le PC : retrouve au prochain demarrage.
             settings.pcId = s.pcId;
             settings.pcName = s.pcName;
-            settings.pcHost = pcHost;
+            settings.pcHost = host;
             const stremioWasOk = !pcInfo || pcInfo.stremio.ok;
+            pcHost = host;
             pcInfo = s;
+            pcOk = true;
             if (!s.stremio.ok && stremioWasOk)
-                toast("Stremio ne tourne pas sur « " + s.pcName + " » (Reglages > Demarrer Stremio)", "warn");
+                toast("Stremio ne tourne pas sur « " + s.pcName + " » (Réglages > Démarrer Stremio)", "warn");
             else if (s.stremio.ok && !stremioWasOk)
                 toast("Stremio est de nouveau actif");
+            if (s.testAddon && !hadTestAddon)
+                loadAddons();
+            sendModulesToPc();
             refreshSettingsRows();
+            refreshStreams();
         }).catch(e => {
-            if (pcOk)
-                toast("PC injoignable : laissez la fenetre du lanceur ouverte sur le PC", "error");
+            if (pcActive)
+                toast("PC injoignable : lecture directe seulement", "warn");
+            pcHost = host;
             pcOk = false;
             refreshSettingsRows();
+            refreshStreams();
         });
+    }
+
+    // ===================== Sonde des modules de la box =====================
+
+    // Modules reserves (fbx.media, fbx.os.mms : lecteur natif, pistes audio) : absents en mode
+    // developpeur, peut-etre accordes a l'appli installee depuis le FreeStore.
+    readonly property var probedModules: [
+        "fbx.media 1.0", "fbx.os.mms 1.0", "fbx.cdm 1.0", "fbx.web 1.0", "fbx.ui.dialog 1.0",
+        "fbx.ui.menu 1.0", "fbx.inapp 1.0", "QtMultimedia 5.15", "QtQuick.LocalStorage 2.0"
+    ]
+
+    function tryCreate(imports, body) {
+        try {
+            const o = Qt.createQmlObject("import QtQuick 2.15\n" + imports + "\n" + body + " {}", app, "sonde");
+            o.destroy();
+            return "";
+        } catch (e) {
+            return e.qmlErrors && e.qmlErrors.length ? e.qmlErrors[0].message : String(e);
+        }
+    }
+
+    function probeModules() {
+        const result = probedModules.map(m => {
+            const err = tryCreate("import " + m, "Item");
+            return { name: m, ok: !err, error: err };
+        });
+        // Types utiles de fbx.media (lecteur natif avec pistes audio et sous-titres).
+        if (result[0].ok) {
+            ["VideoPlayer", "PlayerTimeline"].forEach(t => {
+                const err = tryCreate("import fbx.media 1.0", t);
+                result.push({ name: "fbx.media." + t, ok: !err, error: err });
+            });
+        }
+        modules = result;
+        log("modules : " + result.map(r => r.name + (r.ok ? " ok" : " absent")).join(", "));
+        result.filter(r => !r.ok).forEach(r => log("  " + r.name + " : " + r.error));
+        refreshSettingsRows();
+    }
+
+    // Journal du PC (s'il est la) : resultat de la sonde, une fois par lancement.
+    property bool modulesSent: false
+    function sendModulesToPc() {
+        if (modulesSent || !pcActive || !modules.length)
+            return;
+        modulesSent = true;
+        Http.postJson(cfg.agent + "/fbx/api/log", {
+            source: "Revo Stream " + appVersion + (launchHost ? " (chargée depuis le PC)" : " (installée)"),
+            modules: modules
+        }).catch(() => { modulesSent = false; });
     }
 
     // Compte : session toujours valide ? meme compte qu'avant ?
@@ -158,7 +251,7 @@ Item {
             refreshSettingsRows();
         }).catch(e => {
             if (/Session does not exist/.test(String(e))) {
-                toast("Session Stremio expiree : reliez le compte dans Reglages", "warn");
+                toast("Session Stremio expirée : reliez le compte dans Réglages", "warn");
                 forgetAccount();
                 loadAddons();
             }
@@ -173,28 +266,30 @@ Item {
     }
 
     function startStremioOnPc() {
-        toast("Demarrage de Stremio sur le PC…");
+        toast("Démarrage de Stremio sur le PC…");
         Http.request("POST", cfg.agent + "/fbx/api/start-stremio", {}, false, 90000).then(r => {
-            toast(r.message || "Stremio demarre");
+            toast(r.message || "Stremio démarre");
             checkPc();
-        }).catch(e => toast("Impossible de demarrer Stremio : " + e.message, "error"));
+        }).catch(e => toast("Impossible de démarrer Stremio : " + e.message, "error"));
     }
 
     // Addons et rangees : ceux du compte s'il est lie, sinon ceux par defaut.
     function loadAddons() {
         const fromAccount = authKey
             ? Promise.all([account.addons(authKey), account.libraryItems(authKey).catch(e => {
-                log("bibliotheque indisponible : " + e);
+                log("bibliothèque indisponible : " + e);
                 return [];
             })]).then(r => {
-                log("compte : " + r[0].length + " addons, " + r[1].length + " elements de bibliotheque");
+                log("compte : " + r[0].length + " addons, " + r[1].length + " éléments de bibliothèque");
                 localRows = {
                     continue: Account.continueWatching(r[1]).map(Account.toMeta),
                     library: Account.library(r[1]).map(Account.toMeta)
                 };
-                return r[0].map(d => ({ transportUrl: Addons.localToServer(d.transportUrl, cfg.server), manifest: d.manifest }));
+                // Addon local de Stremio Desktop : seulement via le serveur du PC.
+                return r[0].filter(d => cfg.server || !Addons.isLocalAddon(d.transportUrl))
+                    .map(d => ({ transportUrl: Addons.localToServer(d.transportUrl, cfg.server), manifest: d.manifest }));
             }).catch(e => {
-                log("compte inutilisable (" + e + "), addons par defaut");
+                log("compte inutilisable (" + e + "), addons par défaut");
                 return null;
             })
             : Promise.resolve(null);
@@ -202,7 +297,7 @@ Item {
         fromAccount.then(accountAddons => {
             if (!accountAddons)
                 localRows = {};
-            const extra = pcInfo && pcInfo.testAddon ? [pcInfo.testAddon] : [];
+            const extra = pcActive && pcInfo.testAddon ? [pcInfo.testAddon] : [];
             const urls = (accountAddons ? [] : Config.DEFAULT_ADDONS).concat(extra);
             return client.loadAddons(urls).then(result => {
                 result.errors.forEach(e => log("addon indisponible : " + e.transportUrl + " (" + e.error + ")"));
@@ -211,17 +306,17 @@ Item {
         }).then(list => {
             addons = list;
             const rows = Addons.homeCatalogs(addons);
-            log(addons.length + " addons, " + rows.length + " rangees");
+            log(addons.length + " addons, " + rows.length + " rangées");
             catalogCache = {};
             rowsModel.clear();
             if (!authKey) {
-                localRows.link = [{ id: "__link", type: "", name: "Lier mon compte Stremio : bibliotheque, reprise et addons" }];
+                localRows.link = [{ id: "__link", type: "", name: "Lier mon compte Stremio : bibliothèque, reprise et addons" }];
                 rowsModel.append({ kind: "link", transportUrl: "", addonName: "", type: "", cid: "", name: "Votre compte" });
             }
             if ((localRows.continue || []).length)
-                rowsModel.append({ kind: "continue", transportUrl: "", addonName: "Compte", type: "", cid: "", name: "Continuer a regarder" });
+                rowsModel.append({ kind: "continue", transportUrl: "", addonName: "Compte", type: "", cid: "", name: "Continuer à regarder" });
             if ((localRows.library || []).length)
-                rowsModel.append({ kind: "library", transportUrl: "", addonName: "Compte", type: "", cid: "", name: "Ma bibliotheque" });
+                rowsModel.append({ kind: "library", transportUrl: "", addonName: "Compte", type: "", cid: "", name: "Ma bibliothèque" });
             rows.forEach(r => rowsModel.append({ kind: "catalog", transportUrl: r.transportUrl, addonName: r.addonName,
                                                  type: r.type, cid: r.id, name: r.name + " · " + typeLabel(r.type) }));
             if (screen === "home")
@@ -234,7 +329,7 @@ Item {
                 autotestDone = true;
                 openMeta(Config.AUTOTEST.type, Config.AUTOTEST.id);
             }
-        }).catch(e => log("chargement des addons en echec : " + e));
+        }).catch(e => log("chargement des addons en échec : " + e));
     }
     property bool autotestDone: false
     property bool linksMeasured: false
@@ -252,7 +347,7 @@ Item {
     }
 
     function typeLabel(type) {
-        return type === "movie" ? "Films" : type === "series" ? "Series" : type === "anime" ? "Anime" : type;
+        return type === "movie" ? "Films" : type === "series" ? "Séries" : type === "anime" ? "Anime" : type;
     }
 
     // ===================== Navigation =====================
@@ -330,7 +425,7 @@ Item {
         }).catch(e => {
             if (current !== opened)
                 return;
-            log("fiche en echec : " + e);
+            log("fiche en échec : " + e);
             details.streamsStatus = "Fiche indisponible (" + e.message + ")";
         });
     }
@@ -343,7 +438,7 @@ Item {
     function loadStreams(type, videoId) {
         current.videoId = videoId;
         const at = Resume.resumeAt(positions, accountId, videoId);
-        details.resumeText = at > 0 ? "Reprendre a " + fmtTime(at) : "";
+        details.resumeText = at > 0 ? "Reprendre à " + fmtTime(at) : "";
         details.streams = [];
         details.streamsStatus = "Recherche des sources…";
         const request = {};
@@ -355,7 +450,7 @@ Item {
             if (current.streamsRequest !== request)
                 return;
             answered++;
-            log("flux " + g.addon + " : " + (g.error ? "echec (" + g.error + ")" : g.items.length));
+            log("flux " + g.addon + " : " + (g.error ? "échec (" + g.error + ")" : g.items.length));
             if (g.items.length) {
                 items = items.concat(g.items.map(s => ({ addon: g.addon, stream: s })));
                 current.rawStreams = items;
@@ -377,19 +472,20 @@ Item {
             prefetchBest();
             if (current.autoPlayLike)
                 playClosest();
-        }).catch(e => log("flux en echec : " + e));
+        }).catch(e => log("flux en échec : " + e));
     }
 
     // Capacites du PC et du reseau, pour ecarter les sources qui ne passeraient pas.
     function streamContext() {
         return {
-            capacity: pcInfo ? pcInfo.capacity : null,
+            pc: pcActive,
+            capacity: pcActive ? pcInfo.capacity : null,
             encoderMode: settings.encoder,
             boxLinkMbps: settings.boxLinkMbps,
             boxInternetMbps: settings.boxInternetMbps,
             durationMin: current && current.meta ? Sorting.runtimeMinutes(current.meta.runtime) : 0,
             maxWidth: settings.maxWidth,
-            prefetch: settings.prefetch
+            prefetch: settings.prefetch && pcActive
         };
     }
 
@@ -400,9 +496,10 @@ Item {
         const r = Sorting.sortStreams(raw, sortPrefs, streamContext());
         details.setStreams(r.visible);
         details.streamsStatus = (r.visible.length ? r.visible.length + " sources" : raw.length ? "Aucune source affichable" : "")
-            + (r.hidden ? "  ·  " + r.hidden + " masquees" + (r.heavy ? " (dont " + r.heavy + " trop lourdes pour ce PC/reseau)" : "") : "")
+            + (r.hidden ? "  ·  " + r.hidden + " masquées" + (!r.heavy ? ""
+                : pcActive ? " (dont " + r.heavy + " trop lourdes pour ce PC/réseau)" : " (dont " + r.heavy + " illisibles sans PC)") : "")
             + (current.streamsProgress || "")
-            + (!current.streamsProgress && !raw.length ? "Aucune source trouvee (installez un addon de sources)" : "");
+            + (!current.streamsProgress && !raw.length ? "Aucune source trouvée (installez un addon de sources)" : "");
     }
 
     // Noms des addons qui fournissent des sources (pour leur ordre de priorite).
@@ -453,7 +550,7 @@ Item {
         const token = {};
         playToken = token;
         const opened = current;
-        details.streamsStatus = "Preparation de la lecture…";
+        details.streamsStatus = "Préparation de la lecture…";
         log("choix du flux " + item.addon + " : " + (item.badges || item.stream.name || ""));
         const playCfg = Object.assign({}, cfg, { profile: profileFor(item) });
         Playback.plan(item.stream, playCfg, transport, seriesInfo(), forceTranscoding).then(p => {
@@ -483,7 +580,7 @@ Item {
             });
         }).catch(e => {
             playToken = null;
-            log("preparation de la lecture en echec : " + e);
+            log("préparation de la lecture en échec : " + e);
             if (current === opened)
                 tryNextSource("lecture impossible : " + e.message);
         });
@@ -495,13 +592,13 @@ Item {
         const plain = { url: p.url, mediaUrl: p.mediaUrl, prefetch: null };
         const media = String(p.mediaUrl || "");
         // Sources du PC lui-meme (addon de test) ou du serveur Stremio (torrents, deja en cache) : inutile.
-        if (!settings.prefetch || !/^https?:[/][/]/.test(media) || Config.hostFromUrl(media) === pcHost)
+        if (!settings.prefetch || !pcActive || !/^https?:[/][/]/.test(media) || Config.hostFromUrl(media) === pcHost)
             return Promise.resolve(plain);
         const fraction = durationMs > 0 && startAtMs > 0 ? startAtMs / durationMs : 0;
         return Http.request("GET", cfg.agent + "/fbx/prefetch?start=" + fraction.toFixed(4) + "&url="
                             + encodeURIComponent(media), undefined, false, 30000).then(st => {
             const cached = cfg.agent + st.fileUrl;
-            log("prechargement par le PC : " + Math.round(st.total / 1048576) + " Mo");
+            log("préchargement par le PC : " + Math.round(st.total / 1048576) + " Mo");
             return {
                 url: p.transcoded ? Playback.hlsUrl(playCfg, cached, !!forceTranscoding) : cached,
                 mediaUrl: cached,
@@ -509,7 +606,7 @@ Item {
                             targetS: 0, started: Date.now(), skipUntil: 0 }
             };
         }).catch(e => {
-            log("prechargement impossible (" + e.message + "), lecture sans");
+            log("préchargement impossible (" + e.message + "), lecture sans");
             return plain;
         });
     }
@@ -527,8 +624,8 @@ Item {
             prefetchWaiting = !!pf.prefetch;
             playerLoader.setSource("PlayerPage.qml", {
                 bufferVisible: !!pf.prefetch,
-                bufferTitle: "Prechargement…",
-                bufferDetail: "Le PC telecharge la video en avance pour une lecture sans coupure.",
+                bufferTitle: "Préchargement…",
+                bufferDetail: "Le PC télécharge la vidéo en avance pour une lecture sans coupure.",
                 title: current.meta ? current.meta.name : "",
                 subtitleLine: [details.selectedTitle, (item.badges || "").split(" · ").slice(0, 3).join(" · "),
                                p.transcoded ? "converti par le PC" : "lecture directe"].filter(x => x).join("   ·   "),
@@ -538,7 +635,7 @@ Item {
                 audioTracks: audio,
                 audioIndex: audioIndex,
                 audioSwitchable: p.transcoded && audio.length > 1,
-                subtitleTracks: [{ label: "Desactives", kind: "off" }],
+                subtitleTracks: [{ label: "Désactivés", kind: "off" }],
                 startTimeoutMs: p.transcoded ? 60000 : 15000,
                 nextTitle: next ? "S" + next.season + " E" + (next.episode || next.number) + "  ·  " + (next.title || next.name || "") : "",
                 autoNext: settings.autoNext
@@ -549,7 +646,7 @@ Item {
             screen = "player";
             playerLoader.forceActiveFocus();
             if (startAt > 0)
-                toast("Reprise a " + fmtTime(startAt) + "  ·  ◀ pour reculer");
+                toast("Reprise à " + fmtTime(startAt) + "  ·  ◀ pour reculer");
             loadSubtitles(item.stream, p, audio[audioIndex]);
     }
 
@@ -570,15 +667,15 @@ Item {
             if (st.done || st.error)
                 startNextPrefetch(current.nextPrep);
             if (st.error) {
-                log("prechargement interrompu : " + st.error);
+                log("préchargement interrompu : " + st.error);
                 if (pf.mode !== "play")
-                    beginPlayback(page, pf, "lecture sans prechargement");
+                    beginPlayback(page, pf, "lecture sans préchargement");
                 current.prefetch = null;
                 return;
             }
             const dur = pf.durationMs || page.durationMs;
             const pos = pf.mode === "start" ? pf.startAtMs : page.positionMs;
-            const detail = "Telechargement " + (st.rateBps * 8 / 1e6).toFixed(1) + " Mbit/s   ·   video "
+            const detail = "Téléchargement " + (st.rateBps * 8 / 1e6).toFixed(1) + " Mbit/s   ·   vidéo "
                 + (Buffer.bytesPerSecond(st.total, dur) * 8 / 1e6).toFixed(1) + " Mbit/s";
             if (pf.mode === "start" || pf.mode === "stall") {
                 // Objectif recalcule a chaque mesure de vitesse ; sans mesure (debut du
@@ -590,13 +687,13 @@ Item {
                 if (!pf.targetS && !st.done) {
                     page.bufferPercent = 0;
                     page.bufferEta = "";
-                    page.bufferDetail = "Mesure de la vitesse de telechargement…";
+                    page.bufferDetail = "Mesure de la vitesse de téléchargement…";
                     return;
                 }
                 const pr = Buffer.progress(st, dur, pos, pf.targetS);
                 page.bufferPercent = pr.percent;
                 page.bufferEta = pr.etaS > 0 ? Buffer.formatEta(pr.etaS) : "";
-                page.bufferDetail = detail + (pr.tooLong ? "\nAttente longue : la connexion est plus lente que la video. OK pour lancer quand meme." : "");
+                page.bufferDetail = detail + (pr.tooLong ? "\nAttente longue : la connexion est plus lente que la vidéo. OK pour lancer quand même." : "");
                 if (pr.ready)
                     beginPlayback(page, pf, "");
             } else if (Date.now() > pf.skipUntil && page.playing && page.positionMs > 0
@@ -606,10 +703,10 @@ Item {
                 pf.targetS = 0;
                 pf.started = Date.now();
                 page.pausePlayer();
-                page.bufferTitle = "Mise en memoire…";
+                page.bufferTitle = "Mise en mémoire…";
                 page.bufferPercent = 0;
                 page.bufferVisible = true;
-                log("avance epuisee : pause automatique");
+                log("avance épuisée : pause automatique");
             }
         }).catch(() => {});
     }
@@ -621,10 +718,10 @@ Item {
         page.bufferVisible = false;
         if (wasStart) {
             page.source = current.playUrl;
-            log("lecture apres prechargement (" + Math.round((Date.now() - pf.started) / 1000) + " s)" + (reason ? " : " + reason : ""));
+            log("lecture après préchargement (" + Math.round((Date.now() - pf.started) / 1000) + " s)" + (reason ? " : " + reason : ""));
         } else {
             page.resumePlayer();
-            log("reprise apres mise en memoire");
+            log("reprise après mise en mémoire");
         }
     }
 
@@ -658,9 +755,9 @@ Item {
                 prep.item = Sorting.closest(current.playingItem, visible) || visible[0] || null;
                 if (!prep.item)
                     return;
-                log("episode suivant prepare : " + prep.item.addon + " (" + (prep.item.badges || "") + ")");
+                log("épisode suivant préparé : " + prep.item.addon + " (" + (prep.item.badges || "") + ")");
                 const r = Playback.resolve(prep.item.stream, cfg, { season: next.season, episode: next.episode || next.number });
-                if (settings.prefetch && r.kind === "media" && /^https?:[/][/]/.test(r.mediaUrl) && Config.hostFromUrl(r.mediaUrl) !== pcHost) {
+                if (settings.prefetch && pcActive && r.kind === "media" && /^https?:[/][/]/.test(r.mediaUrl) && Config.hostFromUrl(r.mediaUrl) !== pcHost) {
                     prep.prefetchUrl = r.mediaUrl;
                     // Pas de concurrence avec le telechargement de l'episode en cours : il attend la fin.
                     if (!current.prefetch)
@@ -673,7 +770,7 @@ Item {
         if (!prep || !prep.prefetchUrl || prep.prefetchStarted)
             return;
         prep.prefetchStarted = true;
-        log("prechargement du debut de l'episode suivant");
+        log("préchargement du début de l'épisode suivant");
         Http.request("GET", cfg.agent + "/fbx/prefetch?maxMb=200&url=" + encodeURIComponent(prep.prefetchUrl),
                      undefined, false, 30000).catch(() => {});
     }
@@ -685,10 +782,10 @@ Item {
         current.autoPlayLike = null;
         const pick = Sorting.closest(prev, details.streams);
         if (!pick) {
-            toast("Aucune source pour l'episode suivant", "warn");
+            toast("Aucune source pour l'épisode suivant", "warn");
             return;
         }
-        log("episode suivant : source la plus proche " + pick.addon + " (" + (pick.badges || "") + ")");
+        log("épisode suivant : source la plus proche " + pick.addon + " (" + (pick.badges || "") + ")");
         current.fallbacks = details.streams.filter(x => x !== pick).slice(0, 2);
         play(pick);
     }
@@ -698,7 +795,7 @@ Item {
     function profileFor(item) {
         const info = item.info || Sorting.parse(item.stream);
         const key = Sorting.codecKey(info) || "hevc";
-        const cap = pcInfo ? pcInfo.capacity : null;
+        const cap = pcActive ? pcInfo.capacity : null;
         if (cap && cap.encoders)
             return Sorting.bestEncoder(cap, key === "h264" ? "hevc" : key, settings.encoder).encoder;
         return key === "h264x10" ? "" : cfg.profile;     // sans mesure : prudence sur le 10 bits
@@ -727,9 +824,9 @@ Item {
     }
 
     function loadSubtitles(stream, p, audioTrack) {
-        const options = [{ label: "Desactives", kind: "off" }];
+        const options = [{ label: "Désactivés", kind: "off" }];
         Playback.embeddedSubtitles(p.probe).forEach(s => options.push({
-            label: s.label + "  (integre)", kind: "embedded", language: s.language,
+            label: s.label + "  (intégré)", kind: "embedded", language: s.language,
             stream: Playback.embeddedSubtitleStream(cfg, p.mediaUrl, p.transcoded ? p.url : "", s)
         }));
         const external = (stream.subtitles || []).map(s => ({ addon: "source", sub: s }));
@@ -740,7 +837,7 @@ Item {
                 label: (Playback.languageName(x.sub.lang) || "?") + "  ·  " + x.addon, kind: "external",
                 language: x.sub.lang, url: Playback.subtitlesVttUrl(cfg, x.sub.url)
             }));
-        }).catch(e => log("sous-titres des addons en echec : " + e)).then(() => {
+        }).catch(e => log("sous-titres des addons en échec : " + e)).then(() => {
             pendingSubtitles = { options: options,
                                  first: Resume.pickSubtitle(options, settings.subLang, audioTrack ? audioTrack.language : "") };
             applySubtitles();
@@ -785,7 +882,7 @@ Item {
             if (!page.cues.length)
                 toast("Ce fichier de sous-titres est vide ou illisible, essayez-en un autre", "warn");
         }).catch(e => {
-            log("sous-titres " + option.label + " en echec : " + e.message);
+            log("sous-titres " + option.label + " en échec : " + e.message);
             if (playerLoader.item === page && page.subtitleIndex === index)
                 toast("Sous-titres indisponibles (" + e.message + "), essayez-en un autre", "warn");
         });
@@ -803,14 +900,14 @@ Item {
             if (subStream !== s)
                 return;
             s.segments = SubSeg.parsePlaylist(text, option.stream.playlist);
-            log("sous-titres integres : " + s.segments.length + " segments");
+            log("sous-titres intégrés : " + s.segments.length + " segments");
             if (!s.segments.length)
                 toast("Piste de sous-titres vide", "warn");
             pumpSubtitles();
         }).catch(e => {
-            log("sous-titres integres en echec : " + e.message);
+            log("sous-titres intégrés en échec : " + e.message);
             if (subStream === s)
-                toast("Sous-titres integres indisponibles (" + e.message + ")", "warn");
+                toast("Sous-titres intégrés indisponibles (" + e.message + ")", "warn");
         });
     }
 
@@ -837,7 +934,7 @@ Item {
                     s.page.cues = SubSeg.merge(s.page.cues, cues);
                     if (!s.shown) {
                         s.shown = true;
-                        log("sous-titres integres : premiers sous-titres recus");
+                        log("sous-titres intégrés : premiers sous-titres reçus");
                     }
                 }
                 pumpSubtitles();
@@ -850,11 +947,11 @@ Item {
                 s.tries[i] = (s.tries[i] || 0) + 1;
                 s.retryAt[i] = Date.now() + Math.min(30000, 1000 * Math.pow(2, s.tries[i]));
                 s.failures++;
-                log("segment de sous-titres " + i + " en echec (" + s.tries[i] + ") : " + e.message);
+                log("segment de sous-titres " + i + " en échec (" + s.tries[i] + ") : " + e.message);
                 // Alerte seulement si plus rien n'arrive depuis 30 s.
                 if (!s.warned && subStream === s && Date.now() - s.lastCueAt > 30000) {
                     s.warned = true;
-                    toast("Les sous-titres integres arrivent mal, le PC est peut-etre occupe", "warn");
+                    toast("Les sous-titres intégrés arrivent mal, le PC est peut-être occupé", "warn");
                 }
             });
         });
@@ -871,10 +968,10 @@ Item {
 
     function playbackFailed(reason) {
         const p = current.playback;
-        log("echec de lecture (" + reason + ")");
+        log("échec de lecture (" + reason + ")");
         Qt.callLater(() => {
             stopPlayer();
-            if (p && !p.transcoded && current.playingItem)
+            if (p && !p.transcoded && current.playingItem && pcActive)
                 play(current.playingItem, true);       // direct impossible : conversion par le PC
             else
                 tryNextSource("Lecture impossible : " + reason);
@@ -893,14 +990,14 @@ Item {
         if (prep && prep.video === next && prep.item) {
             // Source choisie et prechargee pendant l'episode precedent : on lance tout de suite.
             current.fallbacks = prep.list.filter(x => x !== prep.item).slice(0, 2);
-            toast("Episode suivant : S" + next.season + " E" + (next.episode || next.number));
+            toast("Épisode suivant : S" + next.season + " E" + (next.episode || next.number));
             play(prep.item);
             return;
         }
         // Des que l'addon de l'episode precedent repond : la source qui lui ressemble le plus.
         current.autoPlayLike = !previous ? null
             : previous.info ? previous : (Sorting.sortStreams([previous], sortPrefs).visible[0] || null);
-        toast("Episode suivant : S" + next.season + " E" + (next.episode || next.number));
+        toast("Épisode suivant : S" + next.season + " E" + (next.episode || next.number));
     }
 
     function stopPlayer() {
@@ -940,7 +1037,7 @@ Item {
                 if (search.token !== token)
                     return;
                 search.results = groups.filter(g => g && g.metas.length);
-                search.status = search.results.length ? "" : "Aucun resultat pour « " + text + " »";
+                search.status = search.results.length ? "" : "Aucun résultat pour « " + text + " »";
             });
     }
 
@@ -953,7 +1050,7 @@ Item {
         accountPage.forceActiveFocus();
         accountPage.status = "";
         if (authKey) {
-            accountPage.email = settings.accountEmail || "compte lie";
+            accountPage.email = settings.accountEmail || "compte lié";
         } else {
             accountPage.email = "";
             startLink();
@@ -963,7 +1060,7 @@ Item {
     function startLink() {
         linkTimer.stop();
         accountPage.code = "";
-        accountPage.status = "Creation du code…";
+        accountPage.status = "Création du code…";
         account.createLink().then(l => {
             accountPage.code = l.code;
             accountPage.link = l.link;
@@ -980,7 +1077,7 @@ Item {
             }, 3000, 100).then(key => {
                 settings.authKey = key;
                 authKey = key;
-                toast("Compte Stremio lie");
+                toast("Compte Stremio lié");
                 checkAccount();
                 showTab(0);
                 loadAddons();
@@ -990,7 +1087,7 @@ Item {
 
     function unlink() {
         forgetAccount();
-        toast("Compte delie de ce Player");
+        toast("Compte délié de ce Player");
         showTab(0);
         loadAddons();
     }
@@ -1003,55 +1100,77 @@ Item {
     }
 
     function refreshSettingsRows() {
-        const pc = pcInfo;
-        const langs = { auto: "Automatique", fr: "Francais", en: "Anglais", vo: "Version originale", off: "Desactives" };
-        settingsPage.setRows([
-            { section: "PC connecte", key: "pcName", label: "Nom", value: pc ? pc.pcName : "—", action: "info" },
-            { section: "PC connecte", key: "pcIp", label: "Adresse", value: pcHost || "—", action: "info" },
-            { section: "PC connecte", key: "pcState", label: "Etat", action: "info",
-              value: !pcOk ? "Injoignable (lancer Lancer-Stremio-Freebox sur le PC)" : pc ? (pc.stremio.ok ? "Stremio " + pc.stremio.version + " actif" : "Stremio arrete") : "…",
-              tone: pcOk && pc && pc.stremio.ok ? "ok" : "bad" },
-            { section: "PC connecte", key: "startStremio", label: "Demarrer Stremio sur le PC", value: "Demarrer", action: "button" },
-            { section: "PC connecte", key: "recheck", label: "Verifier la connexion", value: "Verifier", action: "button" },
-            { section: "Compte Stremio", key: "account", label: authKey ? (settings.accountEmail || "Compte lie") : "Aucun compte lie",
-              value: authKey ? "Gerer" : "Lier un compte", action: "button" },
-            { section: "Lecture", key: "audioLang", label: "Langue audio preferee", value: langs[settings.audioLang] || settings.audioLang, action: "choice" },
-            { section: "Lecture", key: "subLang", label: "Sous-titres par defaut", value: settings.subLang === "auto" ? "Francais si audio etranger" : langs[settings.subLang], action: "choice" },
-            { section: "Lecture", key: "autoNext", label: "Enchainer l'episode suivant", value: settings.autoNext ? "Oui" : "Non", action: "choice" },
-            { section: "Lecture", key: "quality", label: "Qualite en conversion par le PC", value: settings.maxWidth >= 1920 ? "1080p (reseau rapide)" : "720p (recommande)", action: "choice" },
-            { section: "Lecture", key: "encoder", label: "Conversion sur le PC", action: "choice",
-              value: settings.encoder === "cpu" ? "Processeur (lent)"
-                     : cfg.profile ? "Carte graphique (" + cfg.profile + ")" : "Processeur (aucune carte detectee)" },
-            { section: "Lecture", key: "prefetch", label: "Prechargement par le PC (anti-coupures)", action: "choice",
-              value: settings.prefetch ? "Oui" : "Non" },
+        const pc = pcActive ? pcInfo : null;
+        const langs = { auto: "Automatique", fr: "Français", en: "Anglais", vo: "Version originale", off: "Désactivés" };
+        const pcState = settings.pcMode === "off" ? "Non utilisé (lecture directe seulement)"
+            : !pcHost ? "Aucun PC connu (lecture directe seulement)"
+            : !pcOk ? "Injoignable (lecture directe seulement)"
+            : pc.stremio.ok ? "Stremio " + pc.stremio.version + " actif" : "Stremio arrêté";
+        const rows = [
+            { section: "PC (facultatif)", key: "pcMode", label: "Utiliser un PC", action: "choice",
+              value: settings.pcMode === "off" ? "Jamais" : "S'il est allumé" },
+            { section: "PC (facultatif)", key: "pcState", label: "État", action: "info", value: pcState,
+              tone: pc && pc.stremio.ok ? "ok" : pcHost && settings.pcMode !== "off" ? "bad" : "" }
+        ];
+        if (pcHost && settings.pcMode !== "off") {
+            rows.push({ section: "PC (facultatif)", key: "pcName", label: "Nom", value: pc ? pc.pcName : settings.pcName || "—", action: "info" });
+            rows.push({ section: "PC (facultatif)", key: "pcIp", label: "Adresse", value: pcHost, action: "info" });
+        }
+        if (pc)
+            rows.push({ section: "PC (facultatif)", key: "startStremio", label: "Démarrer Stremio sur le PC", value: "Démarrer", action: "button" });
+        if (settings.pcMode !== "off")
+            rows.push({ section: "PC (facultatif)", key: "recheck", label: "Vérifier la connexion", value: "Vérifier", action: "button" });
+        rows.push(
+            { section: "Compte Stremio", key: "account", label: authKey ? (settings.accountEmail || "Compte lié") : "Aucun compte lié",
+              value: authKey ? "Gérer" : "Lier un compte", action: "button" },
+            { section: "Lecture", key: "audioLang", label: "Langue audio préférée", value: langs[settings.audioLang] || settings.audioLang, action: "choice" },
+            { section: "Lecture", key: "subLang", label: "Sous-titres par défaut", value: settings.subLang === "auto" ? "Français si audio étranger" : langs[settings.subLang], action: "choice" },
+            { section: "Lecture", key: "autoNext", label: "Enchaîner l'épisode suivant", value: settings.autoNext ? "Oui" : "Non", action: "choice" },
             { section: "Lecture", key: "sort", label: "Tri des sources", value: "Ouvrir", action: "button" },
-            { section: "Lecture", key: "clearPositions", label: "Oublier les positions de lecture", value: "Effacer", action: "button" },
-            { section: "A propos", key: "version", label: "Version", action: "info",
-              value: "appli " + (pc ? pc.appVersion : "?") + "  ·  agent " + (pc ? pc.agentVersion : "?") },
-            { section: "Capacites", key: "capConvert", label: "Conversion par le PC (HEVC 1080p)", action: "info",
-              value: capacityText() },
-            { section: "Capacites", key: "capPcNet", label: "Internet vers le PC", action: "info",
-              value: pc && pc.capacity && pc.capacity.pcInternetMbps ? pc.capacity.pcInternetMbps + " Mbit/s" : "non mesure" },
-            { section: "Capacites", key: "capLink", label: "PC vers le Player", action: "info",
-              value: settings.boxLinkMbps ? settings.boxLinkMbps + " Mbit/s" : "non mesure" },
-            { section: "Capacites", key: "capBoxNet", label: "Internet vers le Player", action: "info",
-              value: settings.boxInternetMbps ? settings.boxInternetMbps + " Mbit/s" : "non mesure" },
-            { section: "Capacites", key: "speed", label: "Mesurer les debits du Player", value: measuring ? "mesure…" : "Mesurer", action: "button" }
-        ]);
+            { section: "Lecture", key: "clearPositions", label: "Oublier les positions de lecture", value: "Effacer", action: "button" });
+        if (pc) {
+            rows.push(
+                { section: "Lecture avec le PC", key: "quality", label: "Qualité en conversion par le PC", value: settings.maxWidth >= 1920 ? "1080p (réseau rapide)" : "720p (recommandé)", action: "choice" },
+                { section: "Lecture avec le PC", key: "encoder", label: "Conversion sur le PC", action: "choice",
+                  value: settings.encoder === "cpu" ? "Processeur (lent)"
+                         : cfg.profile ? "Carte graphique (" + cfg.profile + ")" : "Processeur (aucune carte détectée)" },
+                { section: "Lecture avec le PC", key: "prefetch", label: "Préchargement par le PC (anti-coupures)", action: "choice",
+                  value: settings.prefetch ? "Oui" : "Non" },
+                { section: "Capacités", key: "capConvert", label: "Conversion par le PC (HEVC 1080p)", action: "info",
+                  value: capacityText() },
+                { section: "Capacités", key: "capPcNet", label: "Internet vers le PC", action: "info",
+                  value: pc.capacity && pc.capacity.pcInternetMbps ? pc.capacity.pcInternetMbps + " Mbit/s" : "non mesuré" },
+                { section: "Capacités", key: "capLink", label: "PC vers le Player", action: "info",
+                  value: settings.boxLinkMbps ? settings.boxLinkMbps + " Mbit/s" : "non mesuré" });
+        }
+        rows.push(
+            { section: "Capacités", key: "capBoxNet", label: "Internet vers le Player", action: "info",
+              value: settings.boxInternetMbps ? settings.boxInternetMbps + " Mbit/s" : "non mesuré" },
+            { section: "Capacités", key: "speed", label: "Mesurer les débits du Player", value: measuring ? "mesure…" : "Mesurer", action: "button" },
+            { section: "À propos", key: "version", label: "Version", action: "info",
+              value: "appli " + appVersion + (pc ? "  ·  agent du PC " + pc.agentVersion : "") });
+        modules.forEach(m => rows.push({ section: "Diagnostic (modules de la box)", key: "module", label: m.name, action: "info",
+                                         value: m.ok ? "présent" : "absent", tone: m.ok ? "ok" : "" }));
+        settingsPage.setRows(rows);
     }
     function capacityText() {
         const cap = pcInfo ? pcInfo.capacity : null;
         if (!cap || !cap.encoders)
-            return "non mesuree (relancer le lanceur du PC)";
+            return "non mesurée (relancer le lanceur du PC)";
         const best = Sorting.bestEncoder(cap, "hevc", settings.encoder);
-        return best.factor.toFixed(1) + "x le temps reel" + (best.encoder ? " (" + best.encoder + ")" : " (processeur)")
+        return best.factor.toFixed(1) + "x le temps réel" + (best.encoder ? " (" + best.encoder + ")" : " (processeur)")
             + "  ·  mesure du " + Qt.formatDate(new Date(cap.measuredAt * 1000), "dd/MM");
     }
 
     function settingAction(key, step) {
         switch (key) {
         case "startStremio": startStremioOnPc(); break;
-        case "recheck": checkPc(); toast("Verification…"); break;
+        case "recheck": checkPc(); toast("Vérification…"); break;
+        case "pcMode":
+            settings.pcMode = settings.pcMode === "off" ? "auto" : "off";
+            checkPc();
+            loadAddons();
+            break;
         case "account": openAccount(); return;
         case "audioLang": settings.audioLang = choice(["auto", "fr", "en", "vo"], settings.audioLang, step || 1); break;
         case "subLang": settings.subLang = choice(["auto", "fr", "en", "off"], settings.subLang, step || 1); break;
@@ -1063,7 +1182,7 @@ Item {
         case "clearPositions":
             positions = {};
             settings.positions = "{}";
-            toast("Positions de lecture effacees");
+            toast("Positions de lecture effacées");
             break;
         case "speed": measureLinks(); break;
         }
@@ -1107,7 +1226,9 @@ Item {
         measuring = true;
         refreshSettingsRows();
         const t = Date.now();
-        downloadMbps(cfg.agent + "/fbx/api/speedtest?bytes=" + (4 * 1024 * 1024) + "&t=" + t).then(link => {
+        const fromPc = pcActive ? downloadMbps(cfg.agent + "/fbx/api/speedtest?bytes=" + (4 * 1024 * 1024) + "&t=" + t)
+                                : Promise.resolve(0);
+        fromPc.then(link => {
             if (link > 0)
                 settings.boxLinkMbps = Math.round(link * 10) / 10;
             return downloadMbps("https://speed.cloudflare.com/__down?bytes=4000000&t=" + t);
@@ -1115,7 +1236,7 @@ Item {
             if (net > 0)
                 settings.boxInternetMbps = Math.round(net * 10) / 10;
             measuring = false;
-            log("debits : PC -> box " + settings.boxLinkMbps + " Mbit/s, Internet -> box " + settings.boxInternetMbps + " Mbit/s");
+            log("débits : PC -> box " + settings.boxLinkMbps + " Mbit/s, Internet -> box " + settings.boxInternetMbps + " Mbit/s");
             refreshSettingsRows();
             refreshStreams();
         });
@@ -1145,15 +1266,16 @@ Item {
         property string pcId: ""
         property string pcName: ""
         property bool accountOffered: false
+        property string pcMode: "auto"     // auto : PC utilise s'il repond ; off : jamais
     }
 
     ListModel { id: rowsModel }
 
     Timer {
-        // Surveillance du PC : nom, Stremio, coupure.
+        // Surveillance du PC : nom, Stremio, coupure (rien a faire sans PC connu).
         interval: 30000
         repeat: true
-        running: true
+        running: app.pcCandidate() !== ""
         onTriggered: checkPc()
     }
 
@@ -1170,7 +1292,7 @@ Item {
         interval: 60000
         repeat: true
         triggeredOnStart: true
-        running: app.screen === "player"
+        running: app.screen === "player" && app.pcActive
         onTriggered: Http.request("GET", app.cfg.agent + "/fbx/api/keepalive").catch(() => {})
     }
 
@@ -1249,8 +1371,9 @@ Item {
             anchors { left: parent.left; right: parent.right; top: parent.top }
             visible: app.screen === "home" || app.screen === "search" || app.screen === "settings"
             current: ["home", "search", "settings"].indexOf(app.screen)
-            pcName: app.pcInfo ? app.pcInfo.pcName : app.pcHost
-            pcOk: app.pcOk
+            // Pastille du PC seulement si un PC est connu (verte : utilise ; rouge : injoignable).
+            pcName: settings.pcMode === "off" ? "" : app.pcActive ? app.pcInfo.pcName : app.pcHost
+            pcOk: app.pcActive
             account: app.authKey ? (settings.accountEmail || "C") : ""
             onTabChosen: app.showTab(index)
             onLeave: app.showTab(current)
@@ -1293,7 +1416,7 @@ Item {
             onLoaded: {
                 if (app.loadCheck) {
                     app.loadCheck = false;
-                    app.log("verification : lecteur charge sans erreur");
+                    app.log("vérification : lecteur charge sans erreur");
                     Qt.callLater(() => { playerLoader.source = ""; });
                     return;
                 }

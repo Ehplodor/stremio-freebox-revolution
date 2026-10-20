@@ -38,7 +38,7 @@ FocusScope {
             anchors.horizontalCenter: parent.horizontalCenter
             color: T.text
             font.pixelSize: 26
-            text: "Connecte : " + page.email + "\n\nOK pour se deconnecter de ce Player."
+            text: "Connecté : " + page.email + "\n\nOK pour se déconnecter de ce Player."
             horizontalAlignment: Text.AlignHCenter
         }
 
@@ -67,7 +67,7 @@ FocusScope {
                 Text {
                     color: T.text
                     font.pixelSize: 22
-                    text: "Sur ton telephone ou ton PC, connecte a Stremio,\nscanne le QR code ou ouvre :"
+                    text: "Sur ton téléphone ou ton PC, connecté à Stremio,\nscanne le QR code ou ouvre :"
                 }
                 Text {
                     color: T.accent

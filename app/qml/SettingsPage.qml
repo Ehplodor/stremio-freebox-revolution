@@ -32,7 +32,7 @@ FocusScope {
         id: title
         x: T.margin
         y: 92
-        text: "Reglages"
+        text: "Réglages"
         color: T.text
         font.pixelSize: T.fontTitle
         font.bold: true
