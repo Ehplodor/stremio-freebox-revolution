@@ -30,6 +30,13 @@ FocusScope {
         debounce.restart();
     }
 
+    // Recherche lancee depuis une fiche (acteur, realisateur...).
+    function setQuery(text) {
+        query = text.toLowerCase().slice(0, 40);
+        debounce.stop();
+        page.search(text);
+    }
+
     function focusKeyboard() {
         keyboard.forceActiveFocus();
     }

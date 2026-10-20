@@ -14,6 +14,7 @@ import "../js/core/subsegments.js" as SubSeg
 import "../js/core/buffer.js" as Buffer
 import "../js/core/library.js" as Library
 import "../js/core/mkv.js" as Mkv
+import "../js/core/discover.js" as Discover
 
 // Racine de l'appli, embarquee dans le paquet FreeStore (main.qml) ; aussi chargeable depuis
 // l'agent du PC (lanceur bootstrap/, developpement).
@@ -378,18 +379,148 @@ Item {
 
     // ===================== Navigation =====================
 
+    // Onglets de la barre du haut, dans l'ordre.
+    readonly property var tabNames: ["home", "discover", "search", "settings"]
+
+    function tab(name) {
+        return tabNames.indexOf(name);
+    }
+
     function showTab(index) {
-        const tabs = ["home", "search", "settings"];
-        screen = tabs[index];
+        screen = tabNames[index];
         lastTab = screen;
         if (screen === "home")
             home.forceActiveFocus();
+        else if (screen === "discover")
+            openDiscover(null);
         else if (screen === "search")
             search.focusKeyboard();
         else {
             refreshSettingsRows();
             settingsPage.focusList();
         }
+    }
+
+    // ===================== Decouvrir =====================
+
+    // type, catalog (transportUrl|id), genre, decade, minRating
+    property var discoverState: ({ type: "movie", catalog: "", genre: "", decade: "", minRating: 0 })
+    property var discoverRaw: []         // titres recus (avant filtres locaux)
+    property var discoverToken: null
+
+    function discoverCatalogs() {
+        return Discover.catalogs(addons).filter(c => c.type === discoverState.type);
+    }
+
+    function currentDiscoverCatalog() {
+        const list = discoverCatalogs();
+        return list.find(c => c.transportUrl + "|" + c.id === discoverState.catalog) || list[0] || null;
+    }
+
+    // opts (facultatif) : { type, genre } (genre d'une fiche) ; null : garder les filtres.
+    function openDiscover(opts) {
+        if (opts) {
+            const st = Object.assign({}, discoverState, { type: opts.type || discoverState.type, catalog: "", genre: "" });
+            discoverState = st;
+            const cat = currentDiscoverCatalog();
+            if (cat && opts.genre && cat.genres.indexOf(opts.genre) !== -1)
+                discoverState = Object.assign({}, discoverState, { genre: opts.genre });
+            screen = "discover";
+            lastTab = "discover";
+        }
+        refreshDiscoverFilters();
+        if (opts || !discoverRaw.length)
+            loadDiscover(true);
+        discover.focusFilters();
+    }
+
+    function refreshDiscoverFilters() {
+        const all = Discover.catalogs(addons);
+        const st = discoverState;
+        const cat = currentDiscoverCatalog();
+        const opt = (id, label) => ({ id: id, label: label });
+        const filters = [
+            { key: "type", label: "Type", value: st.type, options: Discover.types(all).map(t => opt(t, Discover.typeLabel(t))) },
+            { key: "catalog", label: "Catalogue", value: cat ? cat.transportUrl + "|" + cat.id : "",
+              options: discoverCatalogs().map(c => opt(c.transportUrl + "|" + c.id, c.name + "  ·  " + c.addonName)) }
+        ];
+        if (cat && cat.genres.length)
+            filters.push({ key: "genre", label: /^\d{4}$/.test(cat.genres[0]) ? "Année" : "Genre",
+                           value: st.genre || (cat.genreRequired ? cat.genres[0] : ""),
+                           options: (cat.genreRequired ? [] : [opt("", "Tous")]).concat(cat.genres.map(g => opt(g, g))) });
+        filters.push({ key: "decade", label: "Période", value: st.decade, options: Discover.DECADES.map(d => opt(d.id, d.label)) });
+        filters.push({ key: "minRating", label: "Note", value: st.minRating, options: Discover.RATINGS.map(r => opt(r.id, r.label)) });
+        filters.forEach(f => {
+            const o = f.options.find(x => x.id === f.value);
+            f.valueLabel = o ? o.label.split("  ·  ")[0] : "—";
+        });
+        discover.filters = filters;
+    }
+
+    function discoverChanged(key, value) {
+        const st = Object.assign({}, discoverState);
+        st[key] = value;
+        if (key === "type")
+            st.catalog = "", st.genre = "";
+        if (key === "catalog")
+            st.genre = "";
+        discoverState = st;
+        refreshDiscoverFilters();
+        if (key === "decade" || key === "minRating") {
+            showDiscover(true);
+            return;
+        }
+        loadDiscover(true);
+    }
+
+    // Filtres locaux appliques ; trop peu de titres : pages suivantes chargees d'elles-memes.
+    function showDiscover(fillUp) {
+        const list = Discover.apply(discoverRaw, discoverState);
+        discover.metas = list;
+        if (fillUp && list.length < 24 && discover.status === "")
+            loadDiscover(false, true);
+    }
+
+    function loadDiscover(reset, auto) {
+        const cat = currentDiscoverCatalog();
+        if (reset) {
+            discoverRaw = [];
+            discover.metas = [];
+            discoverToken = {};
+            discover.status = "";
+            discoverAutoPages = 0;
+        }
+        if (!cat) {
+            discover.status = "fin";
+            return;
+        }
+        if (discover.status !== "")
+            return;
+        if (auto && ++discoverAutoPages > 6)
+            return;                       // filtres tres selectifs : la suite en descendant
+        const token = discoverToken;
+        discover.status = "chargement";
+        const skip = discoverRaw.length;
+        client.catalog(cat, Discover.request(cat, discoverState.genre, skip)).then(metas => {
+            if (discoverToken !== token)
+                return;
+            const known = {};
+            discoverRaw.forEach(m => { known[m.id] = true; });
+            const fresh = metas.filter(m => !known[m.id]);
+            discoverRaw = discoverRaw.concat(fresh);
+            discover.status = fresh.length && cat.skip ? "" : "fin";
+            showDiscover(true);
+        }).catch(e => {
+            if (discoverToken === token)
+                discover.status = discoverRaw.length ? "fin" : "erreur";
+        });
+    }
+    property int discoverAutoPages: 0
+
+    // Fiche : acteur, realisateur, scenariste -> recherche ; genre -> Decouvrir.
+    function openPerson(name) {
+        showTab(tab("search"));
+        search.setQuery(name);
     }
 
     // ===================== Grille « Tout voir » =====================
@@ -440,7 +571,7 @@ Item {
                 refreshStreams();
                 details.forceActiveFocus();
             } else {
-                showTab(2);
+                showTab(tab("settings"));
             }
         } else if (screen === "details") {
             if (!details.back()) {
@@ -448,14 +579,13 @@ Item {
                     screen = "grid";
                     grid.forceActiveFocus();
                 } else {
-                    showTab(["home", "search", "settings"].indexOf(lastTab));
+                    showTab(tab(lastTab));
                 }
             }
         } else if (screen === "account") {
             linkTimer.stop();
-            showTab(["home", "search", "settings"].indexOf(returnScreen) === -1 ? 0
-                    : ["home", "search", "settings"].indexOf(returnScreen));
-        } else if (screen === "search" || screen === "settings") {
+            showTab(tab(returnScreen) === -1 ? 0 : tab(returnScreen));
+        } else if (screen === "search" || screen === "settings" || screen === "discover") {
             showTab(0);
         } else {
             Qt.quit();
@@ -1206,7 +1336,7 @@ Item {
             playerLoader.item.stop();
         playerLoader.source = "";
         if (current && current.id === "essai") {       // essai V2.1 : retour aux reglages
-            showTab(2);
+            showTab(tab("settings"));
             return;
         }
         screen = "details";
@@ -1679,6 +1809,18 @@ Item {
             onUp: topBar.forceActiveFocus()
         }
 
+        DiscoverPage {
+            id: discover
+            objectName: "decouvrir"
+            anchors.fill: parent
+            visible: app.screen === "discover"
+            progressOf: app.metaProgress
+            onChanged: app.discoverChanged(key, value)
+            onActivated: app.openMeta(meta.type || app.discoverState.type, meta.id)
+            onMoreWanted: { app.discoverAutoPages = 0; app.loadDiscover(false); }
+            onUp: topBar.forceActiveFocus()
+        }
+
         CatalogGridPage {
             id: grid
             objectName: "grille"
@@ -1715,8 +1857,8 @@ Item {
             id: topBar
             objectName: "barre"
             anchors { left: parent.left; right: parent.right; top: parent.top }
-            visible: app.screen === "home" || app.screen === "search" || app.screen === "settings"
-            current: ["home", "search", "settings"].indexOf(app.screen)
+            visible: app.tab(app.screen) !== -1
+            current: app.tab(app.screen)
             // Pastille du PC seulement si un PC est connu (verte : utilise ; rouge : injoignable).
             pcName: settings.pcMode === "off" ? "" : app.pcActive ? app.pcInfo.pcName : app.pcHost
             pcOk: app.pcActive
@@ -1735,6 +1877,8 @@ Item {
             onStreamChosen: { app.current.fallbacks = []; app.play(item); }
             onPlayBest: app.playBest()
             onSortRequested: app.openSortSettings()
+            onPersonChosen: app.openPerson(name)
+            onGenreChosen: app.openDiscover({ type: app.current ? app.current.type : "movie", genre: genre })
         }
 
         SortSettingsPage {
@@ -1791,10 +1935,10 @@ Item {
                 app.openSortSettings();
             } else if (event.key === Qt.Key_Menu && (app.screen === "home" || app.screen === "search")) {
                 event.accepted = true;
-                app.showTab(2);
+                app.showTab(app.tab("settings"));
             } else if (event.key === Qt.Key_Search) {
                 event.accepted = true;
-                app.showTab(1);
+                app.showTab(app.tab("search"));
             }
         }
     }
