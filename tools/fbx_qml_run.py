@@ -70,10 +70,16 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
     entry_loaded = threading.Event()     # le Player a demande le fichier QML d'entree
     dev_suffix = True
     no_pc = False
+    pc_override = ""
 
     def send_no_pc_config(self):
         with open(os.path.join(self.directory, "js", "config.js"), encoding="utf-8") as f:
-            body = f.read().replace("const NO_PC = false;", "const NO_PC = true;").encode("utf-8")
+            body = f.read()
+        if self.no_pc:
+            body = body.replace("const NO_PC = false;", "const NO_PC = true;")
+        if self.pc_override:
+            body = body.replace('const PC_OVERRIDE = "";', 'const PC_OVERRIDE = "%s";' % self.pc_override)
+        body = body.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/javascript; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -103,7 +109,7 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         # (reglages separes), sauf --meme-identifiant.
         if self.path.split("?", 1)[0] == "/manifest.json" and self.dev_suffix:
             return self.send_dev_manifest()
-        if self.path.split("?", 1)[0] == "/js/config.js" and self.no_pc:
+        if self.path.split("?", 1)[0] == "/js/config.js" and (self.no_pc or self.pc_override):
             return self.send_no_pc_config()
         # /stremio/... : meme relais que le service compagnon (companion/companion.py).
         if self.path.startswith("/stremio/"):
@@ -227,6 +233,8 @@ def main():
                         help="garder l'identifiant du manifest (reglages de l'appli installee)")
     parser.add_argument("--sans-pc", action="store_true",
                         help="appli comme sur une box seule : aucun PC utilise (js/config.js NO_PC)")
+    parser.add_argument("--pc", dest="pc_override", default="",
+                        help="adresse du PC imposee a l'appli (ex. une adresse eteinte, pour tester)")
     parser.add_argument("--serve-only", action="store_true",
                         help="sert seulement le dossier, sans contacter le Player (test)")
     args = parser.parse_args()
@@ -244,6 +252,7 @@ def main():
 
     NoCacheHandler.dev_suffix = not args.meme_identifiant
     NoCacheHandler.no_pc = args.sans_pc
+    NoCacheHandler.pc_override = args.pc_override
     bind = local_addr_to(host) if host else "0.0.0.0"
     handler = functools.partial(NoCacheHandler, directory=app_dir)
     server = ThreadedHTTPServer((bind, args.http_port), handler)

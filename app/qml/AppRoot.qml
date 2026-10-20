@@ -123,7 +123,11 @@ Item {
         // Aucun ecran n'attend le PC : addons tout de suite, le PC est verifie en parallele
         // (son eventuel addon de test recharge les addons quand il repond).
         loadAddons();
-        checkPc();
+        // PC verifie apres le premier affichage : une adresse eteinte ne doit rien retarder.
+        if (pcCandidate()) {
+            pcTimer.interval = 8000;
+            pcTimer.start();
+        }
     }
 
     property string appVersion: "?"
@@ -137,13 +141,17 @@ Item {
 
     // PC a essayer : lanceur / developpement, sinon adresse memorisee.
     function pcCandidate() {
-        return settings.pcMode === "off" || Config.NO_PC ? "" : (launchHost || settings.pcHost || "");
+        return settings.pcMode === "off" || Config.NO_PC ? "" : (Config.PC_OVERRIDE || launchHost || settings.pcHost || "");
     }
 
     // Etat de l'agent du PC : nom affiche, Stremio actif, changement de PC. Delai court :
     // une adresse sans machine ne repond jamais.
     function checkPc() {
         const host = pcCandidate();
+        if (!host)
+            pcTimer.stop();
+        else if (!pcTimer.running)
+            pcTimer.start();
         if (!host) {
             pcHost = "";
             pcOk = false;
@@ -152,7 +160,9 @@ Item {
             refreshStreams();
             return Promise.resolve();
         }
-        return Http.request("GET", Config.settingsFor(host).agent + "/fbx/api/status", undefined, false, 4000).then(s => {
+        return Http.request("GET", Config.settingsFor(host).agent + "/fbx/api/status", undefined, false, 2500).then(s => {
+            pcFailures = 0;
+            pcTimer.interval = 30000;
             if (!s || s.agent !== "stremio-fbx")
                 throw new Error("pas un agent Revo Stream");
             const was = pcActive;
@@ -181,6 +191,9 @@ Item {
         }).catch(e => {
             if (pcActive)
                 toast("PC injoignable : lecture directe seulement", "warn");
+            // PC eteint : essais de plus en plus espaces (1, 2, 4... 15 min).
+            pcFailures++;
+            pcTimer.interval = Math.min(15 * 60000, 60000 * Math.pow(2, pcFailures - 1));
             pcHost = host;
             pcOk = false;
             refreshSettingsRows();
@@ -1503,11 +1516,13 @@ Item {
 
     ListModel { id: rowsModel }
 
+    property int pcFailures: 0
     Timer {
-        // Surveillance du PC : nom, Stremio, coupure (rien a faire sans PC connu).
+        // Surveillance du PC : nom, Stremio, coupure (rien a faire sans PC connu). Intervalle
+        // regle par checkPc : 30 s si le PC repond, de plus en plus espace s'il est eteint.
+        id: pcTimer
         interval: 30000
         repeat: true
-        running: app.pcCandidate() !== ""
         onTriggered: checkPc()
     }
 
