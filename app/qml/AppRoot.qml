@@ -13,6 +13,7 @@ import "../js/core/resume.js" as Resume
 import "../js/core/subsegments.js" as SubSeg
 import "../js/core/buffer.js" as Buffer
 import "../js/core/library.js" as Library
+import "../js/core/mkv.js" as Mkv
 
 // Racine de l'appli, embarquee dans le paquet FreeStore (main.qml) ; aussi chargeable depuis
 // l'agent du PC (lanceur bootstrap/, developpement).
@@ -322,19 +323,20 @@ Item {
             const rows = Addons.homeCatalogs(addons);
             if (!perf.addonsMs)
                 perf.addonsMs = Date.now() - perf.startedAt;
-            log(addons.length + " addons, " + rows.length + " rangées en " + fmtSeconds(Date.now() - perf.startedAt));
+            log(addons.length + " addons, " + rows.length + " rangées en " + fmtSeconds(Date.now() - perf.startedAt)
+                + " : " + addons.map(a => a.manifest.name).join(", "));
             catalogCache = {};
             rowsModel.clear();
             if (!authKey) {
                 localRows.link = [{ id: "__link", type: "", name: "Lier mon compte Stremio : bibliothèque, reprise et addons" }];
-                rowsModel.append({ kind: "link", transportUrl: "", addonName: "", type: "", cid: "", name: "Votre compte" });
+                rowsModel.append({ kind: "link", transportUrl: "", addonName: "", type: "", cid: "", name: "Votre compte", skip: false });
             }
             if ((localRows.continue || []).length)
-                rowsModel.append({ kind: "continue", transportUrl: "", addonName: "Compte", type: "", cid: "", name: "Continuer à regarder" });
+                rowsModel.append({ kind: "continue", transportUrl: "", addonName: "Compte", type: "", cid: "", name: "Continuer à regarder", skip: false });
             if ((localRows.library || []).length)
-                rowsModel.append({ kind: "library", transportUrl: "", addonName: "Compte", type: "", cid: "", name: "Ma bibliothèque" });
+                rowsModel.append({ kind: "library", transportUrl: "", addonName: "Compte", type: "", cid: "", name: "Ma bibliothèque", skip: false });
             rows.forEach(r => rowsModel.append({ kind: "catalog", transportUrl: r.transportUrl, addonName: r.addonName,
-                                                 type: r.type, cid: r.id, name: r.name + " · " + typeLabel(r.type) }));
+                                                 type: r.type, cid: r.id, name: r.name + " · " + typeLabel(r.type) , skip: !!r.skip}));
             if (screen === "home")
                 home.forceActiveFocus();
             if (!linksMeasured) {
@@ -390,7 +392,46 @@ Item {
         }
     }
 
+    // ===================== Grille « Tout voir » =====================
+
+    property var gridRow: null           // rangee affichee en grille
+
+    function openGrid(row) {
+        gridRow = row;
+        screen = "grid";
+        grid.reset(row.kind === "catalog" ? row.name + "  ·  " + row.addonName : row.name);
+        grid.metas = row.metas || [];
+        grid.status = row.kind === "catalog" && row.skip ? "" : "fin";
+        if (grid.metas.length < 30 && grid.status === "")
+            loadGridPage();
+    }
+
+    function loadGridPage() {
+        const row = gridRow;
+        if (!row || grid.status !== "")
+            return;
+        grid.status = "chargement";
+        const skip = grid.metas.length;
+        client.catalog({ transportUrl: row.transportUrl, type: row.type, id: row.cid }, { skip: skip }).then(metas => {
+            if (gridRow !== row)
+                return;
+            const known = {};
+            grid.metas.forEach(m => { known[m.id] = true; });
+            const fresh = metas.filter(m => !known[m.id]);
+            grid.metas = grid.metas.concat(fresh);
+            grid.status = fresh.length ? "" : "fin";
+        }).catch(e => {
+            if (gridRow === row)
+                grid.status = grid.metas.length ? "fin" : "erreur";
+        });
+    }
+
     function back() {
+        if (screen === "grid") {
+            gridRow = null;
+            showTab(0);
+            return;
+        }
         if (screen === "player") {
             stopPlayer();
         } else if (screen === "sort") {
@@ -402,8 +443,14 @@ Item {
                 showTab(2);
             }
         } else if (screen === "details") {
-            if (!details.back())
-                showTab(["home", "search", "settings"].indexOf(lastTab));
+            if (!details.back()) {
+                if (gridRow) {
+                    screen = "grid";
+                    grid.forceActiveFocus();
+                } else {
+                    showTab(["home", "search", "settings"].indexOf(lastTab));
+                }
+            }
         } else if (screen === "account") {
             linkTimer.stop();
             showTab(["home", "search", "settings"].indexOf(returnScreen) === -1 ? 0
@@ -428,7 +475,7 @@ Item {
         details.reset();
         screen = "details";
         details.forceActiveFocus();
-        client.meta(addons, type, id).then(meta => {
+        client.meta(addons, type, id, settings.metaLang !== "cinemeta").then(meta => {
             if (current !== opened)
                 return;
             current.meta = meta;
@@ -438,9 +485,12 @@ Item {
             if (type === "series" && episodes.length) {
                 details.episodes = episodes;
                 // Reprendre la serie : episode en cours (ou suivant le dernier vu)
-                const resumeVideo = Resume.seriesResume(meta, positions, accountId);
-                if (resumeVideo)
+                const resumeVideo = Resume.seriesResume(meta, positions, accountId,
+                                                        libraryItems.find(i => i._id === id));
+                if (resumeVideo) {
+                    details.showEpisode(resumeVideo.id);
                     selectEpisode(resumeVideo);
+                }
                 else if (Config.AUTOTEST && Config.AUTOTEST.episode)
                     selectEpisode(episodes.find(v => v.id === Config.AUTOTEST.episode) || episodes[0]);
             } else {
@@ -674,6 +724,39 @@ Item {
             if (startAt > 0)
                 toast("Reprise à " + fmtTime(startAt) + "  ·  ◀ pour reculer");
             loadSubtitles(item.stream, p, audio[audioIndex]);
+            if (!p.probe)
+                loadMkvTracks(p.mediaUrl);
+    }
+
+    // Sans PC (pas d'analyse par le serveur) : pistes audio lues dans l'en-tete du MKV (requete
+    // Range sur 256 Ko, puis a l'endroit indique si les pistes sont plus loin). Affichage seul :
+    // QtMultimedia lit la piste par defaut, sans choix possible.
+    function loadMkvTracks(url) {
+        const page = playerLoader.item;
+        if (!page || !/^https?:/.test(String(url)))
+            return;
+        const head = 262144;
+        Http.fetchBytes(url, 0, head).then(bytes => {
+            const r = Mkv.parse(bytes);
+            if (r.tracksAt)
+                return Http.fetchBytes(url, r.tracksAt, 65536).then(more => Mkv.parse(more, r.tracksAt, r.segmentStart));
+            return r;
+        }).then(r => {
+            if (playerLoader.item !== page)
+                return;
+            if (!r.tracks) {
+                log("pistes du fichier : " + r.error);
+                page.audioNote = "Pistes du fichier inconnues (pas un MKV).";
+                return;
+            }
+            const audio = Mkv.audioTracks(r.tracks, Playback.trackLabel);
+            log("pistes du fichier : " + audio.map(a => a.label).join(" | "));
+            page.audioTracks = audio;
+            page.audioIndex = Mkv.defaultIndex(audio);
+            page.audioNote = audio.length > 1
+                ? "La box lit la piste cochée. Pour en changer : choisir une source dans la bonne langue, ou utiliser le PC."
+                : "";
+        }).catch(e => log("pistes du fichier illisibles : " + e.message));
     }
 
     // Suivi du prechargement : attente au demarrage, pause automatique si l'avance s'epuise.
@@ -1076,7 +1159,7 @@ Item {
             return;
         const at = rowsModel.count && rowsModel.get(0).kind === "link" ? 1 : 0;
         rowsModel.insert(i !== -1 ? i : at, { kind: "continue", transportUrl: "", addonName: "Compte", type: "", cid: "",
-                                              name: "Continuer à regarder" });
+                                              name: "Continuer à regarder", skip: false });
     }
 
     function playbackFailed(reason) {
@@ -1295,6 +1378,9 @@ Item {
             { section: "Lecture", key: "subLang", label: "Sous-titres par défaut", value: settings.subLang === "auto" ? "Français si audio étranger" : langs[settings.subLang], action: "choice" },
             { section: "Lecture", key: "autoNext", label: "Enchaîner l'épisode suivant", value: settings.autoNext ? "Oui" : "Non", action: "choice" },
             { section: "Lecture", key: "sort", label: "Tri des sources", value: "Ouvrir", action: "button" },
+            { section: "Lecture", key: "metaLang", label: "Fiches (résumés, titres)", action: "choice",
+              value: settings.metaLang === "cinemeta" ? "Cinemeta (anglais)" : addons.some(a => !Addons.isCinemeta(a) && Addons.supports(a.manifest, "meta", "", "tt0000001"))
+                     ? "Addon traduit d'abord" : "Addon traduit d'abord (aucun installé)" },
             { section: "Lecture", key: "clearPositions", label: "Oublier les positions de lecture", value: "Effacer", action: "button" });
         if (pc) {
             rows.push(
@@ -1350,6 +1436,7 @@ Item {
         case "audioLang": settings.audioLang = choice(["auto", "fr", "en", "vo"], settings.audioLang, step || 1); break;
         case "subLang": settings.subLang = choice(["auto", "fr", "en", "off"], settings.subLang, step || 1); break;
         case "autoNext": settings.autoNext = !settings.autoNext; break;
+        case "metaLang": settings.metaLang = settings.metaLang === "cinemeta" ? "translated" : "cinemeta"; break;
         case "quality": settings.maxWidth = settings.maxWidth >= 1920 ? 1280 : 1920; break;
         case "encoder": settings.encoder = settings.encoder === "cpu" ? "auto" : "cpu"; break;
         case "prefetch": settings.prefetch = !settings.prefetch; break;
@@ -1510,6 +1597,7 @@ Item {
         property bool accountOffered: false
         property real volume: 1.0          // volume du lecteur (le volume du Player ne s'y applique pas)
         property string localLibrary: "[]" // sans compte : « Continuer a regarder » (LibraryItem)
+        property string metaLang: "translated" // fiches : addon traduit (TMDB...) avant Cinemeta
         property string pcMode: "auto"     // auto : PC utilise s'il repond ; off : jamais
         property string fbxAppToken: ""    // jeton Freebox OS (essais V2.1), jamais dans les journaux
     }
@@ -1587,7 +1675,18 @@ Item {
             companion: app.cfg.companion
             progressOf: app.metaProgress
             onActivated: meta.id === "__link" ? app.openAccount() : app.openMeta(meta.type || fallbackType, meta.id)
+            onExpandRequested: app.openGrid(row)
             onUp: topBar.forceActiveFocus()
+        }
+
+        CatalogGridPage {
+            id: grid
+            objectName: "grille"
+            anchors.fill: parent
+            visible: app.screen === "grid"
+            progressOf: app.metaProgress
+            onActivated: app.openMeta(meta.type || (app.gridRow ? app.gridRow.type : ""), meta.id)
+            onMoreWanted: app.loadGridPage()
         }
 
         SearchPage {

@@ -9,3 +9,4 @@ AccountPage 1.0 AccountPage.qml
 SortSettingsPage 1.0 SortSettingsPage.qml
 TopBar 1.0 TopBar.qml
 Toast 1.0 Toast.qml
+CatalogGridPage 1.0 CatalogGridPage.qml

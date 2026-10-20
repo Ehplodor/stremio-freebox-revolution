@@ -20,6 +20,7 @@ FocusScope {
     property var audioTracks: []         // [{ label }]
     property int audioIndex: 0
     property bool audioSwitchable: false // seulement en transcodage (piste choisie par le compagnon)
+    property string audioNote: ""        // explication sous la liste (sans PC : piste non modifiable)
     property var subtitleTracks: []      // [{ label }] ; le premier est « Desactives »
     property int subtitleIndex: 0
     property int resumeAt: -1            // position (ms) a retrouver apres un rechargement
@@ -468,7 +469,7 @@ FocusScope {
         ListView {
             id: audioList
             objectName: "menu audio"
-            anchors { left: parent.left; leftMargin: 20; top: audioTitle.bottom; topMargin: 10; bottom: parent.bottom; bottomMargin: 20 }
+            anchors { left: parent.left; leftMargin: 20; top: audioTitle.bottom; topMargin: 10; bottom: audioNoteText.top; bottomMargin: 10 }
             width: 340
             clip: true
             model: page.audioTracks
@@ -490,6 +491,16 @@ FocusScope {
                     page.audioChosen(currentIndex);
                 menu.close();
             }
+        }
+
+        Text {
+            id: audioNoteText
+            anchors { left: parent.left; leftMargin: 30; bottom: parent.bottom; bottomMargin: 24 }
+            width: 330
+            text: page.audioNote || (page.audioTracks.length ? "" : "Pistes audio inconnues.")
+            color: T.textMuted
+            font.pixelSize: T.fontTiny + 1
+            wrapMode: Text.Wrap
         }
 
         Text {

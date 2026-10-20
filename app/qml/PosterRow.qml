@@ -13,8 +13,13 @@ FocusScope {
     property int failedImages: 0
     property string companion: ""       // agent du PC, pour convertir les affiches WebP
     property var progressOf: null       // function(meta) -> 0..1 (barre de progression)
-    readonly property var currentMeta: list.currentIndex >= 0 && list.currentIndex < metas.length ? metas[list.currentIndex] : null
+    readonly property var currentMeta: list.currentIndex >= 0 && list.currentIndex < metas.length
+                                       && metas[list.currentIndex].id !== "__all" ? metas[list.currentIndex] : null
     signal activated(var meta)
+
+    // Tuile « Tout voir » (id "__all") en tete : la selection part de la premiere affiche,
+    // Gauche y mene.
+    onMetasChanged: list.currentIndex = metas.length > 1 && metas[0].id === "__all" ? 1 : 0
 
     height: T.posterH + 92
 
@@ -77,14 +82,47 @@ FocusScope {
 
         delegate: Item {
             id: cell
-            width: T.posterW
+            readonly property bool allTile: modelData.id === "__all"
+            width: allTile ? 110 : T.posterW
             height: list.height
             readonly property bool current: ListView.isCurrentItem && row.activeFocus
             readonly property real progress: row.progressOf ? row.progressOf(modelData) : (modelData.progress || 0)
             z: current ? 2 : 1
 
+            // Tuile « Tout voir » : grille de 4 carres dessinee + texte.
+            Rectangle {
+                visible: cell.allTile
+                width: 110
+                height: T.posterH
+                radius: T.radius
+                color: cell.current ? T.text : T.surface
+                border.width: cell.current ? 0 : 1
+                border.color: T.line
+                Grid {
+                    anchors { horizontalCenter: parent.horizontalCenter; bottom: allLabel.top; bottomMargin: 14 }
+                    columns: 2
+                    spacing: 5
+                    Repeater {
+                        model: 4
+                        Rectangle { width: 16; height: 16; radius: 3; color: cell.current ? T.bg : T.accent }
+                    }
+                }
+                Text {
+                    id: allLabel
+                    anchors { horizontalCenter: parent.horizontalCenter; verticalCenter: parent.verticalCenter; verticalCenterOffset: 26 }
+                    width: parent.width - 12
+                    horizontalAlignment: Text.AlignHCenter
+                    text: "Tout voir"
+                    color: cell.current ? T.bg : T.text
+                    font.pixelSize: T.fontSmall
+                    font.bold: true
+                    wrapMode: Text.Wrap
+                }
+            }
+
             Item {
                 id: card
+                visible: !cell.allTile
                 width: T.posterW
                 height: T.posterH
                 scale: cell.current ? 1.08 : 1.0
@@ -159,6 +197,7 @@ FocusScope {
             }
 
             Text {
+                visible: !cell.allTile
                 anchors { top: card.bottom; topMargin: 10; left: card.left; right: card.right }
                 color: cell.current ? T.text : T.textMuted
                 elide: Text.ElideRight

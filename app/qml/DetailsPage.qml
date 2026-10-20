@@ -39,6 +39,18 @@ FocusScope {
         actions.forceActiveFocus();
     }
 
+    // Saison et episode affiches sur la video donnee (reprise de la serie).
+    function showEpisode(videoId) {
+        const v = episodes.find(e => e.id === videoId);
+        if (!v)
+            return;
+        seasonIndex = Math.max(0, seasons.indexOf(v.season));
+        seasonTabs.currentIndex = seasonIndex;
+        const i = seasonEpisodes.findIndex(e => e.id === videoId);
+        episodeList.currentIndex = Math.max(0, i);
+        episodeList.positionViewAtIndex(episodeList.currentIndex, ListView.Center);
+    }
+
     function focusStreams() {
         // Appele quand les premiers flux arrivent : on reste sur les boutons (Lecture pret).
         if (!showingSources && !episodeList.activeFocus && !seasonTabs.activeFocus)

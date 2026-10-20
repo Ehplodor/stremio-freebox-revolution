@@ -62,3 +62,15 @@ test("serie : episode a reprendre", () => {
     p = resume.record(p, "A", "s:1:2", 1190000, 1200000, 9);
     assert.equal(resume.seriesResume(meta, p, "A").id, "s:1:3", "fini : le suivant");
 });
+
+test("serie : reprise faite sur un autre appareil (bibliotheque Stremio)", () => {
+    const meta = { videos: [{ id: "s:1:1", season: 1, episode: 1 }, { id: "s:2:1", season: 2, episode: 1 },
+                            { id: "s:2:2", season: 2, episode: 2 }] };
+    const item = at => ({ _id: "s", state: { video_id: "s:2:1", timeOffset: 1000, lastWatched: new Date(at).toISOString() } });
+    let p = resume.record({}, "A", "s:1:1", 600000, 1200000, Date.parse("2026-10-01"));
+    assert.equal(resume.seriesResume(meta, p, "A", item(Date.parse("2026-10-10"))).id, "s:2:1", "compte plus recent");
+    assert.equal(resume.seriesResume(meta, p, "A", item(Date.parse("2026-09-01"))).id, "s:1:1", "box plus recente");
+    const ended = { _id: "s", state: { video_id: "s:2:1", timeOffset: 0, flaggedWatched: 1, lastWatched: "2026-10-10T00:00:00Z" } };
+    assert.equal(resume.seriesResume(meta, {}, "A", ended).id, "s:2:2", "termine : le suivant");
+    assert.equal(resume.seriesResume(meta, {}, "A", null), null);
+});

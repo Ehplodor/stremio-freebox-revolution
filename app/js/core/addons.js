@@ -105,7 +105,8 @@ function catalogRef(addon, catalog) {
         addonName: addon.manifest.name,
         type: catalog.type,
         id: catalog.id,
-        name: catalog.name || catalog.id
+        name: catalog.name || catalog.id,
+        skip: supportsExtra(catalog, "skip")        // pages suivantes (grille « Tout voir »)
     };
 }
 
@@ -130,8 +131,12 @@ function createClient(fetchJson) {
     }
 
     // Meta depuis le premier addon qui la fournit pour ce type et cet identifiant.
-    function meta(addons, type, id) {
-        const candidates = addons.filter(a => supports(a.manifest, "meta", type, id));
+    // preferTranslated : Cinemeta (anglais seulement) en dernier, pour qu'un addon traduit
+    // (TMDB configure en francais...) fournisse la fiche.
+    function meta(addons, type, id, preferTranslated) {
+        let candidates = addons.filter(a => supports(a.manifest, "meta", type, id));
+        if (preferTranslated)
+            candidates = candidates.filter(a => !isCinemeta(a)).concat(candidates.filter(isCinemeta));
         const tryNext = i => {
             if (i >= candidates.length)
                 return Promise.reject(new Error("Aucun addon ne fournit la fiche " + type + "/" + id));
@@ -202,6 +207,11 @@ function posterUrl(url) {
 // Repli si l'affiche n'a pas pu etre decodee.
 function posterFallback(url, companion) {
     return companion && url ? companion + "/image?url=" + encodeURIComponent(url) : "";
+}
+
+// Cinemeta : fiches en anglais seulement.
+function isCinemeta(addon) {
+    return /cinemeta/i.test(addon.transportUrl) || (addon.manifest && addon.manifest.id === "com.linvo.cinemeta");
 }
 
 // Addon local de Stremio Desktop (fichiers du PC) : joignable seulement par le serveur du PC.

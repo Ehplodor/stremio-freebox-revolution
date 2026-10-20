@@ -9,7 +9,7 @@ L'appli tourne pour de vrai (addons, Cinemeta... : il faut Internet), sans PC pa
   python tools/render_screens.py --pc 192.168.0.16  # avec l'agent du PC
   python tools/render_screens.py --strict           # code de sortie 1 si des textes se chevauchent
 
-Ecrans : home, search, settings, sort, account, movie:<imdb>, series:<imdb>, player.
+Ecrans : home, home:down (tuile « Tout voir »), grid, search, settings, sort, account, movie:<imdb>, series:<imdb>, player.
 Chaque capture est suivie de la liste des textes visibles qui se chevauchent (bug du 20/10/2026 :
 titre de rangee sous les affiches).
 """
@@ -26,7 +26,7 @@ from PyQt5.QtQuick import QQuickView
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 STUBS = os.path.join(ROOT, "tests", "qml_stubs")
 APP_QML = QUrl.fromLocalFile(os.path.join(ROOT, "app", "qml")).toString()
-DEFAULT_SCREENS = ["home", "search", "settings", "sort", "account", "movie:tt15239678", "series:tt0903747", "player"]
+DEFAULT_SCREENS = ["home", "grid", "search", "settings", "sort", "account", "movie:tt15239678", "series:tt0903747", "player"]
 
 APP_WRAPPER = """import QtQuick 2.15
 import "%(app)s" as A
@@ -127,10 +127,23 @@ def render(screen, out_dir, pc, wait_s):
     def step():
         if app is None:
             return
-        if screen in ("home", "search", "settings"):
+        if screen == "home:down":
+            # Deuxieme rangee de l'accueil (tuile « Tout voir » visible)
+            from PyQt5.QtCore import Qt, QEvent
+            from PyQt5.QtGui import QKeyEvent
+            QMetaObject.invokeMethod(app, "showTab", Q_ARG(QVariant, 0))
+            for kind in (QEvent.KeyPress, QEvent.KeyRelease):
+                QTimer.singleShot(4000, lambda k=kind: QGuiApplication.sendEvent(view, QKeyEvent(k, Qt.Key_Down, Qt.NoModifier)))
+            QTimer.singleShot(5000, lambda: [QGuiApplication.sendEvent(view, QKeyEvent(k, Qt.Key_Left, Qt.NoModifier))
+                                             for k in (QEvent.KeyPress, QEvent.KeyRelease)])
+        elif screen in ("home", "search", "settings"):
             QMetaObject.invokeMethod(app, "showTab", Q_ARG(QVariant, ["home", "search", "settings"].index(screen)))
         elif screen == "sort":
             QMetaObject.invokeMethod(app, "openSortSettings")
+        elif screen == "grid":
+            QMetaObject.invokeMethod(app, "openGrid", Q_ARG(QVariant, {
+                "kind": "catalog", "transportUrl": "https://v3-cinemeta.strem.io/manifest.json", "type": "movie",
+                "cid": "top", "name": "Popular", "addonName": "Cinemeta", "skip": True, "metas": []}))
         elif screen == "account":
             QMetaObject.invokeMethod(app, "openAccount")
         elif ":" in screen:

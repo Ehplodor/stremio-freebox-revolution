@@ -265,3 +265,14 @@ test("sans PC : lecture directe sans analyse, torrents et proxy refuses, sous-ti
                  "unsupported");
     assert.equal(playback.subtitlesVttUrl(NOPC, "http://x/a.srt"), "http://x/a.srt");
 });
+
+test("fiche : addon traduit prefere a Cinemeta si demande", async () => {
+    const asked = [];
+    const client = addons.createClient(url => { asked.push(url); return Promise.resolve({ meta: { id: "tt1", name: url.indexOf("tmdb") !== -1 ? "Le Film" : "The Movie" } }); });
+    const list = [
+        { transportUrl: "https://v3-cinemeta.strem.io/manifest.json", manifest: { id: "com.linvo.cinemeta", resources: ["meta"], types: ["movie"], idPrefixes: ["tt"] } },
+        { transportUrl: "https://tmdb.example/%7B%22language%22%3A%22fr-FR%22%7D/manifest.json", manifest: { id: "tmdb", resources: ["meta"], types: ["movie"], idPrefixes: ["tt"] } }
+    ];
+    assert.equal((await client.meta(list, "movie", "tt1")).name, "The Movie");
+    assert.equal((await client.meta(list, "movie", "tt1", true)).name, "Le Film");
+});
