@@ -329,21 +329,17 @@ Item {
             }
             current.streamsProgress = answered < total ? "  ·  " + answered + "/" + total + " addons" : "";
             refreshStreams();
-            const top = details.streams[0];
-            if (current.autoPlay && top && top.info && top.info.cached === true) {
-                current.autoPlay = false;
-                playBest();
-            }
+            const like = current.autoPlayLike;
+            if (like && g.addon === like.addon && g.items.length)
+                playClosest();
             if (items.length)
                 details.focusStreams();
         }).then(() => {
             if (current.streamsRequest !== request)
                 return;
             log("flux pour " + videoId + " : " + items.length);
-            if (current.autoPlay && details.streams.length) {
-                current.autoPlay = false;
-                playBest();
-            }
+            if (current.autoPlayLike)
+                playClosest();
         }).catch(e => log("flux en echec : " + e));
     }
 
@@ -359,9 +355,16 @@ Item {
             + (!current.streamsProgress && !raw.length ? "Aucune source trouvee (installez un addon de sources)" : "");
     }
 
+    // Noms des addons qui fournissent des sources (pour leur ordre de priorite).
+    function streamAddonNames() {
+        return addons.filter(a => Addons.supports(a.manifest, "stream")).map(a => a.manifest.name)
+            .filter((n, i, list) => n && list.indexOf(n) === i);
+    }
+
     function openSortSettings() {
         returnScreen = screen;
         screen = "sort";
+        sortPage.addonNames = streamAddonNames();
         sortPage.prefs = sortPrefs;
         sortPage.forceActiveFocus();
     }
@@ -451,6 +454,21 @@ Item {
             if (current === opened)
                 tryNextSource("lecture impossible : " + e.message);
         });
+    }
+
+    // Episode suivant : source la plus proche de celle de l'episode precedent
+    // (meme addon, meme equipe de sortie, resolution, langues, codec...).
+    function playClosest() {
+        const prev = current.autoPlayLike;
+        current.autoPlayLike = null;
+        const pick = Sorting.closest(prev, details.streams);
+        if (!pick) {
+            toast("Aucune source pour l'episode suivant", "warn");
+            return;
+        }
+        log("episode suivant : source la plus proche " + pick.addon + " (" + (pick.badges || "") + ")");
+        current.fallbacks = details.streams.filter(x => x !== pick).slice(0, 2);
+        play(pick);
     }
 
     // Source suivante de la liste (bouton Lecture), ou message d'echec.
@@ -618,12 +636,15 @@ Item {
 
     function playNext() {
         const next = current.nextVideo;
+        const previous = current.playingItem;
         savePosition();
         stopPlayer();
         if (!next)
             return;
         selectEpisode(next);
-        current.autoPlay = true;                       // lance la meilleure source des qu'elle arrive
+        // Des que l'addon de l'episode precedent repond : la source qui lui ressemble le plus.
+        current.autoPlayLike = !previous ? null
+            : previous.info ? previous : (Sorting.sortStreams([previous], sortPrefs).visible[0] || null);
         toast("Episode suivant : S" + next.season + " E" + (next.episode || next.number));
     }
 

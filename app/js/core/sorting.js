@@ -4,6 +4,7 @@
 // au format courant des addons (Torrentio, Comet, StreamFusion...).
 
 const CRITERIA = {
+    addon: "Addon (ordre choisi ci-dessous)",
     cached: "En cache chez le debrideur",
     resolution: "Resolution",
     language: "Langue",
@@ -20,7 +21,8 @@ const LANGUAGE_PRESETS = [
 ];
 
 const DEFAULT_PREFS = {
-    order: ["cached", "resolution", "language", "direct", "size", "seeders"],
+    order: ["addon", "cached", "resolution", "language", "direct", "size", "seeders"],
+    addonOrder: [],           // noms d'addons, du prefere au moins prefere (vide : aucun ordre)
     maxResolution: 1080,      // le Player affiche au plus du 1080p ; au-dela, transcodage inutile
     languages: "fr",
     hideUncached: false,
@@ -37,18 +39,24 @@ function normalize(prefs) {
     const p = Object.assign({}, DEFAULT_PREFS, prefs || {});
     const known = Object.keys(CRITERIA);
     const order = (Array.isArray(p.order) ? p.order : []).filter((c, i, a) => known.indexOf(c) !== -1 && a.indexOf(c) === i);
-    // Critere absent (ajoute dans une version plus recente) : place apres son voisin par defaut.
-    DEFAULT_PREFS.order.forEach((c, i) => {
-        if (order.indexOf(c) !== -1)
-            return;
-        const before = DEFAULT_PREFS.order.slice(0, i).reverse().find(x => order.indexOf(x) !== -1);
-        order.splice(before ? order.indexOf(before) + 1 : order.length, 0, c);
-    });
     // Migration ponctuelle : ordre par defaut enregistre par une version de test qui placait
     // "direct" en dernier (19 octobre 2026).
     if (order.join() === "cached,resolution,language,size,seeders,direct")
         order.splice(3, 0, order.pop());
+    // Critere absent (ajoute dans une version plus recente) : place apres son voisin par defaut.
+    // "addon" va en tete : sans effet tant qu'aucun ordre d'addons n'est choisi.
+    const defaults = DEFAULT_PREFS.order.filter(c => c !== "addon");
+    defaults.forEach((c, i) => {
+        if (order.indexOf(c) !== -1)
+            return;
+        const before = defaults.slice(0, i).reverse().find(x => order.indexOf(x) !== -1);
+        order.splice(before ? order.indexOf(before) + 1 : order.length, 0, c);
+    });
+    if (order.indexOf("addon") === -1)
+        order.unshift("addon");
     p.order = order;
+    p.addonOrder = (Array.isArray(p.addonOrder) ? p.addonOrder : [])
+        .filter((n, i, a) => typeof n === "string" && n && a.indexOf(n) === i);
     return p;
 }
 
@@ -90,6 +98,8 @@ function parse(stream) {
     if (seed)
         info.seeders = parseInt(seed[1], 10);
 
+    info.group = releaseGroup(stream);
+
     const langs = [];
     Object.keys(FLAGS).forEach(f => { if (text.indexOf(f) !== -1) langs.push(FLAGS[f]); });
     if (/\b(multi|vff?\+?vo|dual)\b/i.test(lower)) langs.push("multi");
@@ -97,6 +107,22 @@ function parse(stream) {
     if (/\b(english|eng)\b/i.test(lower)) langs.push("en");
     info.languages = langs.filter((l, i) => langs.indexOf(l) === i);
     return info;
+}
+
+// Equipe de sortie ("FraMeSToR", "QxR"...) : fin du nom de fichier ou crochets.
+function releaseGroup(stream) {
+    const hints = stream.behaviorHints || {};
+    const candidates = [hints.filename, String(stream.title || stream.description || "").split("\n")[0]];
+    for (let i = 0; i < candidates.length; i++) {
+        const t = String(candidates[i] || "").replace(/\.(mkv|mp4|avi|ts|m2ts)$/i, "").trim();
+        let m = /-([A-Za-z0-9]{2,20})\)?$/.exec(t);
+        if (m && !/^(\d+p|x26[45]|h26[45]|hevc|avc|dts|ac3|aac|web|dl)$/i.test(m[1]))
+            return m[1].toLowerCase();
+        m = /\[([A-Za-z0-9 .]{2,20})\]\s*$/.exec(t);
+        if (m)
+            return m[1].toLowerCase();
+    }
+    return "";
 }
 
 // Raison de masquer un flux selon les preferences, ou "".
@@ -125,9 +151,22 @@ function languageRank(info, prefs) {
     return best;
 }
 
+function addonRank(name, prefs) {
+    const i = (prefs.addonOrder || []).indexOf(name);
+    return i === -1 ? 1000 : i;
+}
+
+// Ordre complet des addons : ceux deja ordonnes, puis les nouveaux (dans l'ordre recu).
+function mergedAddonOrder(prefs, names) {
+    const order = (prefs.addonOrder || []).slice();
+    (names || []).forEach(n => { if (n && order.indexOf(n) === -1) order.push(n); });
+    return order;
+}
+
 // Comparaison selon un critere : negatif si a passe avant b.
 function compareBy(criterion, a, b, prefs) {
     switch (criterion) {
+    case "addon": return addonRank(a.addon, prefs) - addonRank(b.addon, prefs);
     case "cached": return (b.info.cached === true) - (a.info.cached === true) || (a.info.cached === false) - (b.info.cached === false);
     case "resolution": return b.info.resolution - a.info.resolution;
     case "language": return languageRank(a.info, prefs) - languageRank(b.info, prefs);
@@ -184,7 +223,7 @@ function cycle(list, value, step) {
 }
 
 // Lignes de l'ecran de reglages : [{ key, label, value }]
-function settingsRows(prefsIn) {
+function settingsRows(prefsIn, addonNames) {
     const p = normalize(prefsIn);
     const rows = p.order.map((c, i) => ({ key: "order:" + c, label: "Critere " + (i + 1), value: CRITERIA[c] }));
     const preset = LANGUAGE_PRESETS.find(x => x.id === p.languages) || LANGUAGE_PRESETS[0];
@@ -194,14 +233,29 @@ function settingsRows(prefsIn) {
     rows.push({ key: "hideDolbyVision", label: "Masquer Dolby Vision", value: p.hideDolbyVision ? "Oui" : "Non" });
     rows.push({ key: "maxSizeGb", label: "Taille maximale", value: p.maxSizeGb ? p.maxSizeGb + " Go" : "Aucune" });
     rows.push({ key: "hideTiny", label: "Masquer les fichiers trop petits (< 300 Mo)", value: p.hideTiny ? "Oui" : "Non" });
+    mergedAddonOrder(p, addonNames).forEach((name, i) => {
+        rows.push({ key: "addon:" + name, label: "Addon " + (i + 1), value: name });
+    });
     rows.push({ key: "reset", label: "Revenir aux reglages par defaut", value: "" });
     return rows;
 }
 
 // Gauche/Droite (step -1/+1) ou OK (step 0) sur une ligne : nouvelles preferences.
 // Sur un critere, Gauche/Droite le fait monter ou descendre dans l'ordre.
-function edit(prefsIn, key, step) {
+function edit(prefsIn, key, step, addonNames) {
     const p = normalize(prefsIn);
+    if (key.indexOf("addon:") === 0) {
+        const order = mergedAddonOrder(p, addonNames);
+        const name = key.slice(6);
+        const i = order.indexOf(name);
+        const j = i + (step || 0);
+        if (i !== -1 && step && j >= 0 && j < order.length) {
+            order.splice(i, 1);
+            order.splice(j, 0, name);
+        }
+        p.addonOrder = order;
+        return p;
+    }
     if (key.indexOf("order:") === 0) {
         const c = key.slice(6);
         const i = p.order.indexOf(c);
@@ -223,4 +277,41 @@ function edit(prefsIn, key, step) {
     case "reset": return normalize(null);
     }
     return p;
+}
+
+// ----- Episode suivant : source la plus proche de la precedente -----
+
+// Ressemblance entre la source jouee (entree triee : { addon, info }) et une candidate.
+function similarity(prev, cand) {
+    const a = prev.info, b = cand.info;
+    let score = 0;
+    if (prev.addon === cand.addon) score += 100;
+    if (a.group && a.group === b.group) score += 60;
+    if (a.resolution && a.resolution === b.resolution) score += 30;
+    if (a.codec && a.codec === b.codec) score += 15;
+    if (a.languages.length && a.languages.some(l => b.languages.indexOf(l) !== -1)) score += 20;
+    if (a.languages.length && a.languages.length === b.languages.length
+            && a.languages.every(l => b.languages.indexOf(l) !== -1)) score += 10;
+    if (a.hdr === b.hdr) score += 5;
+    if (b.cached === true) score += 12;
+    if (b.cached === false) score -= 12;
+    if (a.sizeGb && b.sizeGb) {
+        const ratio = Math.min(a.sizeGb, b.sizeGb) / Math.max(a.sizeGb, b.sizeGb);
+        score += Math.round(10 * ratio);
+    }
+    return score;
+}
+
+// Candidate la plus proche ; a egalite, l'ordre du tri decide. null si liste vide.
+function closest(prev, candidates) {
+    let best = null;
+    let bestScore = -Infinity;
+    candidates.forEach(c => {
+        const sc = similarity(prev, c);
+        if (sc > bestScore) {
+            best = c;
+            bestScore = sc;
+        }
+    });
+    return best;
 }

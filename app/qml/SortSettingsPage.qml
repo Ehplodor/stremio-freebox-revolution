@@ -8,19 +8,18 @@ FocusScope {
     id: page
 
     property var prefs: Sorting.normalize(null)
+    property var addonNames: []          // addons de sources installes (ordre modifiable)
     signal changed(var prefs)
 
-    readonly property var rows: Sorting.settingsRows(prefs)
+    readonly property var rows: Sorting.settingsRows(prefs, addonNames)
 
     function apply(key, step) {
         const before = list.currentIndex;
-        prefs = Sorting.edit(prefs, key, step);
+        prefs = Sorting.edit(prefs, key, step, addonNames);
         changed(prefs);
-        // Un critere deplace : la selection le suit.
-        if (key.indexOf("order:") === 0 && step)
-            list.currentIndex = Math.max(0, Math.min(prefs.order.length - 1, before + step));
-        else
-            list.currentIndex = before;
+        // Un critere ou un addon deplace : la selection le suit.
+        const i = rows.findIndex(r => r.key === key);
+        list.currentIndex = i !== -1 ? i : before;
     }
 
     Rectangle {
@@ -41,11 +40,12 @@ FocusScope {
         anchors { left: header.left; top: header.bottom; topMargin: 8 }
         color: T.textMuted
         font.pixelSize: 18
-        text: "Gauche/Droite : changer (sur un critere : le monter ou le descendre) · OK : basculer · Retour : fermer. Enregistre automatiquement."
+        text: "Gauche/Droite : changer (critere ou addon : le monter ou le descendre) · OK : basculer · Retour : fermer"
     }
 
     ListView {
         id: list
+        objectName: "lignes"
         anchors { left: parent.left; right: parent.right; top: header.bottom; topMargin: 50; bottom: parent.bottom; margins: 60 }
         focus: true
         clip: true
@@ -56,8 +56,8 @@ FocusScope {
         delegate: Item {
             width: list.width
             height: 46
-            readonly property bool separator: index > 0 && modelData.key.indexOf("order:") !== 0
-                                              && page.rows[index - 1].key.indexOf("order:") === 0
+            readonly property bool separator: index > 0 && page.rows[index - 1].key.split(":")[0] !== modelData.key.split(":")[0]
+                                              && (page.rows[index - 1].key.indexOf(":") !== -1 || modelData.key.indexOf(":") !== -1)
             Rectangle {
                 visible: parent.separator
                 width: parent.width

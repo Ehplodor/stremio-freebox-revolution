@@ -179,6 +179,21 @@ def launch_on_player(player, pc_ip, port, stop):
     return log_path
 
 
+def enter_pressed():
+    """Touche Entree dans la fenetre (Windows) ; False ailleurs ou sans console."""
+    try:
+        import msvcrt
+    except ImportError:
+        return False
+    pressed = False
+    try:
+        while msvcrt.kbhit():
+            pressed = msvcrt.getwch() in ("\r", "\n") or pressed
+    except OSError:
+        return False
+    return pressed
+
+
 def set_autostart(enable):
     if enable:
         bat = os.path.join(ROOT, "Lancer-Stremio-Freebox.bat")
@@ -233,11 +248,20 @@ def main():
         launch_on_player(player, pc_ip, args.port, stop)
 
     print("\nTout est pret. Laissez cette fenetre ouverte pendant que vous regardez.")
-    print("Sur la tele : l'appli se connecte toute seule a \"%s\". Ctrl+C pour arreter.\n" % cfg["pcName"])
+    print("Sur la tele : l'appli se connecte toute seule a \"%s\"." % cfg["pcName"])
+    if player and pc_ip:
+        print("Appli fermee sur la tele ? Appuyez sur Entree ici pour la reafficher.")
+    print("Ctrl+C pour arreter.\n")
     warned = False
+    last_check = time.time()
     try:
         while True:
-            time.sleep(30)
+            time.sleep(0.3)
+            if player and pc_ip and enter_pressed():
+                launch_on_player(player, pc_ip, args.port, stop)
+            if time.time() - last_check < 30:
+                continue
+            last_check = time.time()
             ok = companion.stremio_status(stremio)["ok"]
             if not ok and not warned:
                 line(WARN, "Le serveur Stremio ne repond plus ; la tele pourra le redemarrer (Reglages)")
