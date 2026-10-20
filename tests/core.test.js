@@ -240,3 +240,13 @@ test("sous-titres integres en segments : URLs de la playlist", () => {
     assert.ok(d.needsMaster);
     assert.match(d.playlist, /^http:\/\/pc:11480\/hlsv2\/fbx[a-z0-9]+\/subtitle0\.m3u8\?mediaURL=http%3A%2F%2Fcdn%2Ff\.mkv/);
 });
+
+test("encodeur materiel : choix et parametre de conversion", () => {
+    assert.equal(playback.bestProfile(["amf", "nvenc-win"], "auto"), "nvenc-win");
+    assert.equal(playback.bestProfile(["amf"], "auto"), "amf");
+    assert.equal(playback.bestProfile([], "auto"), "");
+    assert.equal(playback.bestProfile(["nvenc-win"], "cpu"), "");
+    const url = playback.hlsUrl(Object.assign({ profile: "nvenc-win" }, SETTINGS), "http://x/f.mkv", false);
+    assert.match(url, /&profile=nvenc-win$/);
+    assert.doesNotMatch(playback.hlsUrl(SETTINGS, "http://x/f.mkv", false), /profile=/);
+});

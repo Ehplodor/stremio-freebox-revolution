@@ -204,6 +204,16 @@ def relay(handler, stremio, path, method="GET"):
         _write(handler, data)
         return
 
+    if status >= 500:
+        data = rsp.read()
+        log_server_error(path, status, data)
+        handler.send_response(status)
+        handler.send_header("Content-Type", rsp.headers.get("Content-Type", "text/plain"))
+        handler.send_header("Content-Length", str(len(data)))
+        handler.end_headers()
+        _write(handler, data)
+        return
+
     # Reponse en flux continu (segments video, torrents) : pas de mise en memoire.
     handler.send_response(status)
     for k in ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges"):
@@ -305,13 +315,28 @@ def save_config(cfg):
 
 
 def stremio_status(stremio):
-    """{ ok, version } du serveur de streaming (reponse rapide ou echec)."""
+    """{ ok, version, profiles } du serveur de streaming (reponse rapide ou echec).
+    profiles : encodeurs materiels que Stremio a detectes et testes (nvenc-win, amf...)."""
     try:
         with urllib.request.urlopen(stremio + "/settings", timeout=2) as rsp:
             values = json.load(rsp).get("values", {})
-            return {"ok": True, "version": values.get("serverVersion", "")}
+            return {"ok": True, "version": values.get("serverVersion", ""),
+                    "profiles": values.get("allTranscodeProfiles") or [],
+                    "hardwareAccel": bool(values.get("transcodeHardwareAccel", True))}
     except Exception:  # noqa: BLE001 - toute erreur = serveur absent
-        return {"ok": False, "version": ""}
+        return {"ok": False, "version": "", "profiles": [], "hardwareAccel": False}
+
+
+def log_server_error(path, status, body):
+    """Erreurs 5xx du serveur Stremio dans %APPDATA%/stremio-fbx/logs/agent-errors.log
+    (chemin sans parametres : ils contiennent les liens du debrideur)."""
+    try:
+        os.makedirs(os.path.join(CONFIG_DIR, "logs"), exist_ok=True)
+        with open(os.path.join(CONFIG_DIR, "logs", "agent-errors.log"), "a", encoding="utf-8") as f:
+            f.write("%s %d %s %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), status, path.split("?", 1)[0],
+                                       body[:300].decode("utf-8", "replace").replace("\n", " ")))
+    except OSError:
+        pass
 
 
 def find_stremio_exe():

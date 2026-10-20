@@ -25,8 +25,10 @@ Item {
     readonly property var cfg: {
         const c = Config.settingsFor(pcHost);
         c.maxWidth = settings.maxWidth;
+        c.profile = Playback.bestProfile(pcInfo && pcInfo.stremio ? pcInfo.stremio.profiles : [], settings.encoder);
         return c;
     }
+    property var probeCache: ({})      // analyses du serveur deja demandees (mediaURL -> Promise)
 
     property var addons: []
     property string screen: "home"       // home | search | settings | details | player | account | sort
@@ -43,7 +45,31 @@ Item {
     property var subStream: null         // sous-titres integres en cours de chargement par segments
     property var current: null           // fiche ouverte : { type, id, videoId, meta, ... }
     property var client: Addons.createClient(Http.fetchJson)
-    readonly property var transport: ({ fetchJson: Http.fetchJson, postJson: Http.postJson })
+    // Les analyses (/hlsv2/probe) sont gardees : celle de la meilleure source est demandee
+    // a l'avance, pendant que la fiche est affichee.
+    readonly property var transport: ({ fetchJson: app.fetchJsonCached, postJson: Http.postJson })
+
+    function fetchJsonCached(url) {
+        if (url.indexOf("/hlsv2/probe?") === -1)
+            return Http.fetchJson(url);
+        if (!probeCache[url]) {
+            probeCache[url] = Http.fetchJson(url);
+            probeCache[url].catch(() => { delete probeCache[url]; });
+        }
+        return probeCache[url];
+    }
+
+    // Analyse anticipee de la meilleure source (lien direct : debrideur, HTTP).
+    function prefetchBest() {
+        const top = details.streams[0];
+        if (!top || current.prefetched === top.stream)
+            return;
+        const r = Playback.resolve(top.stream, cfg, seriesInfo());
+        if (r.kind !== "media")
+            return;
+        current.prefetched = top.stream;
+        fetchJsonCached(Playback.probeUrl(cfg, r.mediaUrl)).catch(() => {});
+    }
     property var account: Account.createAccount(transport)
 
     function log(msg) {
@@ -338,6 +364,7 @@ Item {
             if (current.streamsRequest !== request)
                 return;
             log("flux pour " + videoId + " : " + items.length);
+            prefetchBest();
             if (current.autoPlayLike)
                 playClosest();
         }).catch(e => log("flux en echec : " + e));
@@ -419,7 +446,7 @@ Item {
                 return;
             }
             const probe = p.probe ? p.probe.streams.map(s => s.track + ":" + s.codec).join(" ") : "probe indisponible";
-            log((p.transcoded ? "transcodage" : "lecture directe") + " (" + probe + ")");
+            log((p.transcoded ? "transcodage par " + (cfg.profile || "le processeur") : "lecture directe") + " (" + probe + ")");
             const audio = Playback.audioTracks(p.probe);
             const audioIndex = p.transcoded ? Resume.pickAudio(audio, settings.audioLang) : 0;
             const url = audioIndex > 0 ? Playback.withAudio(p.url, audio[audioIndex].id) : p.url;
@@ -561,7 +588,8 @@ Item {
     // Sous-titres integres : segments de quelques secondes autour de la position de lecture,
     // comme un lecteur HLS (extraire toute la piste obligerait le PC a lire tout le fichier).
     function startSegmentedSubtitles(page, option, index) {
-        const s = { page: page, index: index, segments: [], done: {}, busy: 0, failures: 0, shown: false };
+        const s = { page: page, index: index, segments: [], done: {}, busy: 0, failures: 0, shown: false,
+                    retryAt: {}, lastCueAt: Date.now(), warned: false };
         subStream = s;
         log("sous-titres " + option.label + " : segments");
         const ready = option.stream.needsMaster ? Http.fetchText(option.stream.master, 60000) : Promise.resolve();
@@ -586,7 +614,9 @@ Item {
         if (!s || !s.segments.length || playerLoader.item !== s.page || s.page.subtitleIndex !== s.index)
             return;
         const position = Math.max(0, s.page.positionMs - s.page.subDelay);
-        SubSeg.needed(s.segments, position, s.done).slice(0, Math.max(0, 3 - s.busy)).forEach(i => {
+        const now = Date.now();
+        SubSeg.needed(s.segments, position, s.done).filter(i => !(s.retryAt[i] > now))
+            .slice(0, Math.max(0, 3 - s.busy)).forEach(i => {
             s.done[i] = true;
             s.busy++;
             Http.fetchText(s.segments[i].url, 45000).then(text => {
@@ -594,6 +624,9 @@ Item {
                 if (subStream !== s || playerLoader.item !== s.page)
                     return;
                 const cues = Vtt.parse(text);
+                s.tries = s.tries || {};
+                delete s.tries[i];
+                s.lastCueAt = Date.now();
                 if (cues.length) {
                     s.page.cues = SubSeg.merge(s.page.cues, cues);
                     if (!s.shown) {
@@ -604,11 +637,19 @@ Item {
                 pumpSubtitles();
             }).catch(e => {
                 s.busy--;
-                delete s.done[i];                  // nouvel essai au prochain passage
+                delete s.done[i];
+                // Nouvel essai avec un delai croissant (2, 4, 8... 30 s) : le serveur refuse
+                // temporairement des segments quand il est occupe a convertir la video.
+                s.tries = s.tries || {};
+                s.tries[i] = (s.tries[i] || 0) + 1;
+                s.retryAt[i] = Date.now() + Math.min(30000, 1000 * Math.pow(2, s.tries[i]));
                 s.failures++;
-                log("segment de sous-titres en echec : " + e.message);
-                if (s.failures === 6 && subStream === s)
+                log("segment de sous-titres " + i + " en echec (" + s.tries[i] + ") : " + e.message);
+                // Alerte seulement si plus rien n'arrive depuis 30 s.
+                if (!s.warned && subStream === s && Date.now() - s.lastCueAt > 30000) {
+                    s.warned = true;
                     toast("Les sous-titres integres arrivent mal, le PC est peut-etre occupe", "warn");
+                }
             });
         });
     }
@@ -761,6 +802,9 @@ Item {
             { section: "Lecture", key: "subLang", label: "Sous-titres par defaut", value: settings.subLang === "auto" ? "Francais si audio etranger" : langs[settings.subLang], action: "choice" },
             { section: "Lecture", key: "autoNext", label: "Enchainer l'episode suivant", value: settings.autoNext ? "Oui" : "Non", action: "choice" },
             { section: "Lecture", key: "quality", label: "Qualite en conversion par le PC", value: settings.maxWidth >= 1920 ? "1080p (reseau rapide)" : "720p (recommande)", action: "choice" },
+            { section: "Lecture", key: "encoder", label: "Conversion sur le PC", action: "choice",
+              value: settings.encoder === "cpu" ? "Processeur (lent)"
+                     : cfg.profile ? "Carte graphique (" + cfg.profile + ")" : "Processeur (aucune carte detectee)" },
             { section: "Lecture", key: "sort", label: "Tri des sources", value: "Ouvrir", action: "button" },
             { section: "Lecture", key: "clearPositions", label: "Oublier les positions de lecture", value: "Effacer", action: "button" },
             { section: "A propos", key: "version", label: "Version", action: "info",
@@ -779,6 +823,7 @@ Item {
         case "subLang": settings.subLang = choice(["auto", "fr", "en", "off"], settings.subLang, step || 1); break;
         case "autoNext": settings.autoNext = !settings.autoNext; break;
         case "quality": settings.maxWidth = settings.maxWidth >= 1920 ? 1280 : 1920; break;
+        case "encoder": settings.encoder = settings.encoder === "cpu" ? "auto" : "cpu"; break;
         case "sort": openSortSettings(); return;
         case "clearPositions":
             positions = {};
@@ -825,6 +870,7 @@ Item {
         property string subLang: "auto"
         property bool autoNext: true
         property int maxWidth: 1280
+        property string encoder: "auto"   // auto : carte graphique si disponible ; cpu : processeur
         // PC utilise (lu aussi par le lanceur du Player, bootstrap/main.qml)
         property string pcHost: ""
         property string pcId: ""

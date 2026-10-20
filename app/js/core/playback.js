@@ -57,6 +57,9 @@ function hlsUrl(settings, mediaUrl, force) {
     BOX.audioCodecs.forEach(c => pairs.push(["audioCodecs", c]));
     pairs.push(["maxAudioChannels", BOX.maxAudioChannels]);
     pairs.push(["maxWidth", settings.maxWidth || BOX.maxWidth]);
+    // Encodeur materiel (carte graphique) : 6x plus rapide que le processeur sur le PC de Rod.
+    if (settings.profile)
+        pairs.push(["profile", settings.profile]);
     return (settings.companion || settings.server) + "/hlsv2/" + randomId() + "/master.m3u8?" + query(pairs);
 }
 
@@ -266,4 +269,17 @@ function defaultSubtitle(options, audio) {
         return 0;
     const i = options.findIndex(o => o.kind !== "off" && isFrench(o.language));
     return i === -1 ? 0 : i;
+}
+
+// Encodeur a demander au serveur : NVIDIA, puis AMD, puis Intel ; "" = processeur.
+// profiles : liste annoncee par le serveur (allTranscodeProfiles).
+function bestProfile(profiles, mode) {
+    if (mode === "cpu" || !Array.isArray(profiles))
+        return "";
+    const order = ["nvenc-win", "nvenc", "amf", "qsv-win", "qsv", "vaapi", "videotoolbox"];
+    for (let i = 0; i < order.length; i++) {
+        if (profiles.indexOf(order[i]) !== -1)
+            return order[i];
+    }
+    return profiles.length ? profiles[0] : "";
 }
