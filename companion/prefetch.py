@@ -191,7 +191,8 @@ class Prefetch:
         Renvoie la position atteinte (end + 1 si tout a ete envoye)."""
         self.last_access = time.time()
         pos = start
-        with open(self.path, "rb") as f:
+        f = None
+        try:
             while pos <= end:
                 with self.cond:
                     self.cond.wait_for(lambda: self.end > pos or self.error or self.cancelled
@@ -201,6 +202,11 @@ class Prefetch:
                     # pos < base : partie plus suivie (saut du lecteur) -> relais direct par l'appelant
                     if self.error or self.cancelled or available <= pos or pos < self.base:
                         return pos
+                if f is None:
+                    try:
+                        f = open(self.path, "rb")     # cree par le telechargement avant ses premieres donnees
+                    except OSError:
+                        return pos                    # fichier efface (nettoyage) : relais direct
                 f.seek(pos)
                 data = f.read(min(CHUNK, available - pos, end - pos + 1))
                 if not data:
@@ -208,7 +214,10 @@ class Prefetch:
                 out.write(data)
                 pos += len(data)
                 self.last_access = time.time()
-        return pos
+            return pos
+        finally:
+            if f is not None:
+                f.close()
 
 
 class Manager:
@@ -268,7 +277,9 @@ class Manager:
                 continue
             path = os.path.join(self.folder, name)
             pid = name[:-5]
-            busy = pid in self.items and self.items[pid].thread.is_alive()
+            item = self.items.get(pid)
+            # En cours de telechargement, ou lu recemment (film en cours, deja entierement recu).
+            busy = bool(item) and (item.thread.is_alive() or time.time() - item.last_access < 600)
             try:
                 st = os.stat(path)
             except OSError:

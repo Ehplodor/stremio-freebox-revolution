@@ -101,6 +101,8 @@ function parse(stream) {
         info.seeders = parseInt(seed[1], 10);
 
     info.group = releaseGroup(stream);
+    // Torrent : telecharge par le serveur Stremio du PC, la box le lit sur le reseau local.
+    info.torrent = !!stream.infoHash && !stream.url;
 
     const langs = [];
     Object.keys(FLAGS).forEach(f => { if (text.indexOf(f) !== -1) langs.push(FLAGS[f]); });
@@ -167,22 +169,63 @@ function bestEncoder(capacity, key, mode) {
 // Faisabilite d'une source : { ok, mode: "direct"|"convert", margin, mbps, reason }.
 // ctx : { capacity, encoderMode, boxLinkMbps, boxInternetMbps, durationMin, maxWidth } ;
 // une valeur inconnue (0 ou absente) ne bloque rien.
+// Attente au demarrage (s) avec le prechargement quand le PC telecharge moins vite que la video
+// (rapport m = debit / debit video) : meme calcul que buffer.startTarget, divise par la vitesse.
+function prefetchWaitS(m, durationMin) {
+    if (m >= 1.2)
+        return 0;
+    const remaining = (durationMin || 120) * 60;
+    return m > 0 ? (12 + remaining * (1 - m)) / m : Infinity;
+}
+
+const MAX_PREFETCH_WAIT_S = 15 * 60;
+
 function assess(info, ctx) {
     ctx = ctx || {};
     const mbps = estimateMbps(info, ctx.durationMin);
     const key = codecKey(info);
     const res = info.resolution || 1080;
     const margins = [];
-    if (key === "h264" && res <= 1080) {
-        // Lecture directe : la box telecharge elle-meme la source.
-        if (ctx.boxInternetMbps > 0) {
-            const m = ctx.boxInternetMbps / mbps;
+    const pcNet = ctx.capacity ? ctx.capacity.pcInternetMbps : 0;
+    // Prechargement (sources HTTP) : une connexion du PC plus lente que la video donne une attente
+    // au demarrage, pas des coupures. Acceptable si l'attente reste sous 15 min.
+    const prefetched = !!ctx.prefetch && !info.torrent;
+    let waitS = 0;
+    function pcInternet(mode) {
+        if (!(pcNet > 0))
+            return null;
+        const m = pcNet / mbps;
+        if (prefetched) {
+            waitS = prefetchWaitS(m, ctx.durationMin);
+            if (waitS > MAX_PREFETCH_WAIT_S)
+                return { ok: false, mode: mode, margin: m, mbps: mbps,
+                         reason: "Internet du PC trop lent (" + Math.round(mbps) + " Mbit/s, attente > 15 min)" };
+            margins.push(Math.max(m, 1.5));     // l'attente est annoncee a part
+        } else {
             if (m < 1.15)
-                return { ok: false, mode: "direct", margin: m, mbps: mbps,
-                         reason: "Internet de la box trop lent (" + Math.round(mbps) + " Mbit/s)" };
+                return { ok: false, mode: mode, margin: m, mbps: mbps,
+                         reason: "Internet du PC trop lent (" + Math.round(mbps) + " Mbit/s)" };
             margins.push(m);
         }
-        return { ok: true, mode: "direct", margin: margins.length ? Math.min.apply(null, margins) : 99, mbps: mbps, reason: "" };
+        return null;
+    }
+    if (key === "h264" && res <= 1080) {
+        // Lecture directe : la box lit la source sur Internet, ou sur le PC (prechargement, torrent).
+        const viaPc = prefetched || info.torrent;
+        const link = viaPc ? ctx.boxLinkMbps : ctx.boxInternetMbps;
+        if (link > 0) {
+            const m = link / mbps;
+            if (m < 1.15)
+                return { ok: false, mode: "direct", margin: m, mbps: mbps,
+                         reason: (viaPc ? "reseau PC → box trop lent (" : "Internet de la box trop lent (")
+                                 + Math.round(mbps) + " Mbit/s)" };
+            margins.push(m);
+        }
+        const slow = prefetched ? pcInternet("direct") : null;
+        if (slow)
+            return slow;
+        return { ok: true, mode: "direct", margin: margins.length ? Math.min.apply(null, margins) : 99, mbps: mbps,
+                 reason: "", waitS: waitS };
     }
     if (!key)
         return { ok: true, mode: "unknown", margin: 99, mbps: mbps, reason: "" };
@@ -196,14 +239,9 @@ function assess(info, ctx) {
                      reason: best.factor ? "trop lourde a convertir pour ce PC" : "conversion impossible sur ce PC" };
         margins.push(factor / 1.25);
     }
-    const pcNet = ctx.capacity ? ctx.capacity.pcInternetMbps : 0;
-    if (pcNet > 0) {
-        const m = pcNet / mbps;
-        if (m < 1.15)
-            return { ok: false, mode: "convert", margin: m, mbps: mbps,
-                     reason: "Internet du PC trop lent (" + Math.round(mbps) + " Mbit/s)" };
-        margins.push(m);
-    }
+    const slow = pcInternet("convert");
+    if (slow)
+        return slow;
     if (ctx.boxLinkMbps > 0) {
         const out = (ctx.maxWidth || 1280) >= 1920 ? 7 : 4;
         const m = ctx.boxLinkMbps / out;
@@ -211,7 +249,8 @@ function assess(info, ctx) {
             return { ok: false, mode: "convert", margin: m, mbps: mbps, reason: "reseau PC → box trop lent" };
         margins.push(m);
     }
-    return { ok: true, mode: "convert", margin: margins.length ? Math.min.apply(null, margins) : 99, mbps: mbps, reason: "" };
+    return { ok: true, mode: "convert", margin: margins.length ? Math.min.apply(null, margins) : 99, mbps: mbps,
+             reason: "", waitS: waitS };
 }
 
 // Raison de masquer un flux selon les preferences, ou "".
@@ -303,6 +342,8 @@ function fitBadge(fit) {
         return "  ·  ⚠ " + fit.reason;
     if (fit.margin < 1.5)
         return "  ·  ⚠ limite pour ce PC/reseau";
+    if (fit.waitS > 60)
+        return "  ·  attente ~" + Math.round(fit.waitS / 60) + " min";
     return "";
 }
 

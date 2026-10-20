@@ -187,3 +187,28 @@ test("capacites : sources possibles ou non selon le PC et le reseau", () => {
                                     sorting.edit(null, "hideTooHeavy", 0), ctx);
     assert.match(all.visible[0].badges, /Internet du PC trop lent/, "reglage : tout afficher avec l'avertissement");
 });
+
+test("capacites avec prechargement : attente acceptee, reseau local pour la box", () => {
+    const p = s => sorting.parse(s);
+    const ctx = { capacity: RECENT, boxLinkMbps: 18, boxInternetMbps: 5, durationMin: 120, maxWidth: 1280 };
+    const pre = Object.assign({}, ctx, { prefetch: true });
+    // H.264 a 8 Mbit/s : Internet de la box (5) trop lent, mais avec le prechargement elle lit le PC (18).
+    const h264 = p({ name: "[AD+] T\n1080p", title: "Film 1080p x264 FRENCH\n💾 7.2 GB" });
+    assert.ok(!sorting.assess(h264, ctx).ok);
+    assert.ok(sorting.assess(h264, pre).ok);
+    // HEVC a 11 Mbit/s, Internet du PC a 10,5 : petite attente au lieu d'etre masquee.
+    const hevc = p({ name: "[AD+] T\n1080p", title: "Film 1080p x265 FRENCH\n💾 9.7 GB" });
+    assert.ok(!sorting.assess(hevc, ctx).ok);
+    const fit = sorting.assess(hevc, pre);
+    assert.ok(fit.ok);
+    assert.ok(fit.waitS > 60 && fit.waitS < 15 * 60, "attente " + fit.waitS);
+    assert.match(sorting.sortStreams([{ addon: "A", stream: { name: "[AD+] T\n1080p", title: "Film 1080p x265 FRENCH\n💾 9.7 GB" } }],
+                                     null, pre).visible[0].badges, /attente ~\d+ min/);
+    // Remux 30 Go : attente bien trop longue, toujours masque.
+    const remux = p({ name: "[AD+] T\n1080p", title: "Film 1080p REMUX HEVC FRENCH\n💾 30 GB" });
+    assert.match(sorting.assess(remux, pre).reason, /attente > 15 min/);
+    // Torrent : lu sur le PC par la box, pas de prechargement.
+    const tor = sorting.parse({ name: "Torrentio\n1080p", title: "Film 1080p x264\n💾 7.2 GB", infoHash: "abc" });
+    assert.equal(tor.torrent, true);
+    assert.ok(sorting.assess(tor, ctx).ok, "torrent H.264 : reseau PC -> box, pas Internet de la box");
+});

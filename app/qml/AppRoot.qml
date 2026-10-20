@@ -63,12 +63,12 @@ Item {
     // Analyse anticipee de la meilleure source (lien direct : debrideur, HTTP).
     function prefetchBest() {
         const top = details.streams[0];
-        if (!top || current.prefetched === top.stream)
+        if (!top || current.probed === top.stream)
             return;
         const r = Playback.resolve(top.stream, cfg, seriesInfo());
         if (r.kind !== "media")
             return;
-        current.prefetched = top.stream;
+        current.probed = top.stream;
         fetchJsonCached(Playback.probeUrl(cfg, r.mediaUrl)).catch(() => {});
     }
     property var account: Account.createAccount(transport)
@@ -365,7 +365,8 @@ Item {
             const like = current.autoPlayLike;
             if (like && g.addon === like.addon && g.items.length)
                 playClosest();
-            if (items.length)
+            // Pas pendant la lecture (episode suivant deja lance) : le lecteur garderait la main.
+            if (items.length && screen === "details")
                 details.focusStreams();
         }).then(() => {
             if (current.streamsRequest !== request)
@@ -385,7 +386,8 @@ Item {
             boxLinkMbps: settings.boxLinkMbps,
             boxInternetMbps: settings.boxInternetMbps,
             durationMin: current && current.meta ? Sorting.runtimeMinutes(current.meta.runtime) : 0,
-            maxWidth: settings.maxWidth
+            maxWidth: settings.maxWidth,
+            prefetch: settings.prefetch
         };
     }
 
@@ -595,7 +597,8 @@ Item {
                 page.bufferDetail = detail + (pr.tooLong ? "\nAttente longue : la connexion est plus lente que la video. OK pour lancer quand meme." : "");
                 if (pr.ready)
                     beginPlayback(page, pf, "");
-            } else if (Date.now() > pf.skipUntil && page.positionMs > 0 && Buffer.shouldStall(st, dur, page.positionMs)) {
+            } else if (Date.now() > pf.skipUntil && page.playing && page.positionMs > 0
+                       && Buffer.shouldStall(st, dur, page.positionMs)) {
                 pf.mode = "stall";
                 prefetchWaiting = true;
                 pf.targetS = 0;
@@ -900,6 +903,9 @@ Item {
 
     function stopPlayer() {
         subStream = null;
+        prefetchWaiting = false;
+        if (current)
+            current.prefetch = null;           // l'agent arrete seul un prechargement abandonne
         savePosition();
         if (playerLoader.item)
             playerLoader.item.stop();
@@ -1067,10 +1073,22 @@ Item {
         return new Promise(resolve => {
             const start = Date.now();
             const xhr = new XMLHttpRequest();
+            let finished = false;
+            // Sans reponse en 20 s (site bloque, reseau coupe) : mesure abandonnee.
+            const timer = Http.startTimer(20000, () => {
+                if (finished)
+                    return;
+                finished = true;
+                xhr.abort();
+                resolve(0);
+            });
             xhr.responseType = "arraybuffer";
             xhr.onreadystatechange = () => {
-                if (xhr.readyState !== XMLHttpRequest.DONE)
+                if (xhr.readyState !== XMLHttpRequest.DONE || finished)
                     return;
+                finished = true;
+                timer.stop();
+                timer.destroy();
                 const got = xhr.status === 200 && xhr.response ? xhr.response.byteLength : 0;
                 resolve(got ? got * 8 / 1000 / Math.max(1, Date.now() - start) : 0);
             };

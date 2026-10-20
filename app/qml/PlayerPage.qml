@@ -56,6 +56,7 @@ FocusScope {
     }
     readonly property int positionMs: player.position
     readonly property int durationMs: player.duration
+    readonly property bool playing: player.playbackState === MediaPlayer.PlayingState
     signal finished()
     signal failed(string reason)
     property bool failedOnce: false      // erreur + media invalide arrivent souvent ensemble
@@ -644,6 +645,10 @@ FocusScope {
         case Qt.Key_MediaTogglePlayPause:
         case Qt.Key_MediaPlay:
         case Qt.Key_MediaPause:
+            if (page.bufferVisible) {
+                page.skipBuffering();
+                break;
+            }
             if (player.playbackState === MediaPlayer.PlayingState)
                 player.pause();
             else
