@@ -12,3 +12,4 @@ Toast 1.0 Toast.qml
 CatalogGridPage 1.0 CatalogGridPage.qml
 DiscoverPage 1.0 DiscoverPage.qml
 PosterGrid 1.0 PosterGrid.qml
+PreloadOverlay 1.0 PreloadOverlay.qml

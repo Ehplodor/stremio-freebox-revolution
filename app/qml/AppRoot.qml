@@ -17,6 +17,7 @@ import "../js/core/mkv.js" as Mkv
 import "../js/core/discover.js" as Discover
 import "../js/core/tmdb.js" as Tmdb
 import "../js/core/lzstring.js" as LZ
+import "../js/core/daycache.js" as DayCache
 
 // Racine de l'appli, embarquee dans le paquet FreeStore (main.qml) ; aussi chargeable depuis
 // l'agent du PC (lanceur bootstrap/, developpement).
@@ -58,6 +59,8 @@ Item {
     property var subStream: null         // sous-titres integres en cours de chargement par segments
     property var current: null           // fiche ouverte : { type, id, videoId, meta, ... }
     property var client: Addons.createClient(Http.fetchJson)
+    // Catalogues (accueil, Decouvrir, « Tout voir ») : reponses gardees pour la journee.
+    property var catalogClient: Addons.createClient(url => app.cachedFetch(url))
     // Les analyses (/hlsv2/probe) sont gardees : celle de la meilleure source est demandee
     // a l'avance, pendant que la fiche est affichee.
     readonly property var transport: ({ fetchJson: app.fetchJsonCached, postJson: Http.postJson })
@@ -349,6 +352,7 @@ Item {
                 linksMeasured = true;
                 measureDelay.start();
             }
+            preloadCatalogs();
             if (Config.AUTOTEST && Config.AUTOTEST.id && !autotestDone) {
                 autotestDone = true;
                 openMeta(Config.AUTOTEST.type, Config.AUTOTEST.id);
@@ -365,7 +369,7 @@ Item {
         const key = ref.transportUrl + "|" + ref.type + "|" + ref.id + "|" + JSON.stringify(extra || {});
         if (!catalogCache[key]) {
             const t0 = Date.now();
-            catalogCache[key] = client.catalog(ref, extra);
+            catalogCache[key] = catalogClient.catalog(ref, extra);
             if (!extra)
                 catalogCache[key].then(() => {
                     perf.catalogs.push({ name: ref.addonName || ref.name, ms: Date.now() - t0 });
@@ -375,6 +379,112 @@ Item {
             catalogCache[key].catch(() => { delete catalogCache[key]; });
         }
         return catalogCache[key];
+    }
+
+    // ===================== Catalogues du jour =====================
+
+    property var dayCache: null          // DayCache : reponses des catalogues de la journee
+    property var dayPending: ({})        // requetes en cours (accueil et prechargement partagent)
+    property bool preloading: false
+    property bool preloadShown: true     // ecran de progression (OK : continuer pendant)
+    property int preloadDone: 0
+    property int preloadTotal: 0
+    property bool flushPending: false    // memoire videe dans les Reglages : recharger a l'accueil
+
+    function currentDayCache() {
+        const day = DayCache.dayOf(new Date());
+        if (!dayCache || dayCache.day !== day)
+            dayCache = DayCache.parse(settings.dayCache, day);
+        return dayCache;
+    }
+
+    // fetchJson avec les catalogues du jour.
+    function cachedFetch(url) {
+        if (!DayCache.cacheable(url))
+            return Http.fetchJson(url);
+        const cache = currentDayCache();
+        const hit = DayCache.get(cache, url);
+        if (hit)
+            return Promise.resolve(hit);
+        const k = DayCache.key(url);
+        if (!dayPending[k]) {
+            dayPending[k] = Http.fetchJson(url).then(r => {
+                delete dayPending[k];
+                if (dayCache === cache) {
+                    DayCache.put(cache, url, r);
+                    dayCacheSave.restart();
+                }
+                return r;
+            }, e => {
+                delete dayPending[k];
+                throw e;
+            });
+        }
+        return dayPending[k];
+    }
+
+    function saveDayCache() {
+        if (!dayCache)
+            return;
+        try {
+            const text = DayCache.serialize(dayCache);
+            settings.dayCache = text;
+            log("catalogues du jour : " + DayCache.count(dayCache) + " réponses, " + Math.round(text.length / 1024) + " Ko enregistrés");
+        } catch (e) {
+            log("catalogues du jour non enregistrés : " + e);
+        }
+    }
+
+    // Premier demarrage du jour : premiere page de chaque catalogue (accueil, Decouvrir,
+    // « Tous les catalogues ») et de TMDB complet si la cle est la.
+    function preloadCatalogs() {
+        const cache = currentDayCache();
+        if (cache.preloaded || preloading) {
+            preloadShown = false;
+            return;
+        }
+        loadTmdbKey();
+        const tasks = Discover.catalogs(addons).filter(c => !c.genreRequired)
+            .map(c => () => catalogClient.catalog(c, {}));
+        if (tmdbKey)
+            ["movie", "series"].forEach(type => tasks.push(() => cachedFetch(
+                Tmdb.discoverUrl(tmdbKey, type, Discover.apiOptions(Discover.apiCatalog(type, []), {}, 1)))));
+        preloading = true;
+        preloadDone = 0;
+        preloadTotal = tasks.length;
+        const t0 = Date.now();
+        DayCache.runAll(tasks, 4, (done, total) => {
+            preloadDone = done;
+            preloadTotal = total;
+        }).then(() => {
+            preloading = false;
+            if (dayCache !== cache)
+                return;
+            cache.preloaded = true;
+            saveDayCache();
+            log("catalogues du jour préparés : " + tasks.length + " en " + fmtSeconds(Date.now() - t0));
+            hidePreload();
+        });
+    }
+
+    function hidePreload() {
+        if (!preloadShown)
+            return;
+        preloadShown = false;
+        if (screen === "home")
+            home.forceActiveFocus();
+    }
+
+    // Reglages : « Vider la memoire » ; tout est recharge au retour a l'accueil.
+    function flushDayCache() {
+        dayCacheSave.stop();
+        dayCache = DayCache.create(DayCache.dayOf(new Date()));
+        dayPending = {};
+        settings.dayCache = "";
+        catalogCache = {};
+        discoverRaw = [];
+        flushPending = true;
+        toast("Mémoire vidée : les catalogues seront rechargés au retour à l'accueil");
     }
 
     function typeLabel(type) {
@@ -391,6 +501,11 @@ Item {
     }
 
     function showTab(index) {
+        if (flushPending && tabNames[index] === "home") {
+            flushPending = false;
+            preloadShown = true;
+            loadAddons();
+        }
         screen = tabNames[index];
         lastTab = screen;
         if (screen === "home")
@@ -591,7 +706,7 @@ Item {
         if (cat.kind === "tmdbApi") {
             const page = discoverPage + 1;
             const opts = Discover.apiOptions(cat, Object.assign({}, st, { ageCountry: discoverAgeCountry }), page);
-            return Http.fetchJson(Tmdb.discoverUrl(tmdbKey, st.type, opts)).then(r => {
+            return cachedFetch(Tmdb.discoverUrl(tmdbKey, st.type, opts)).then(r => {
                 const metas = Tmdb.metas(r, st.type);
                 if (!metas.length && page === 1 && st.maxAge && st.type === "movie" && !discoverAgeCountry) {
                     log("Découvrir : aucun film en classification française, repli sur l'américaine");
@@ -605,7 +720,7 @@ Item {
         }
         if (cat.kind === "all") {
             const active = discoverParts.filter(p => !p.done);
-            return Promise.all(active.map(p => client.catalog(p.cat, Discover.request(p.cat, st.genre, p.skip)).then(metas => {
+            return Promise.all(active.map(p => catalogClient.catalog(p.cat, Discover.request(p.cat, st.genre, p.skip)).then(metas => {
                 p.skip += metas.length;
                 p.done = !metas.length || !p.cat.skip;
                 return metas;
@@ -614,7 +729,7 @@ Item {
                 return [];
             }))).then(lists => ({ lists: lists, done: discoverParts.every(p => p.done) }));
         }
-        return client.catalog(Discover.withAge(cat, st.maxAge), Discover.request(cat, st.genre, discoverRaw.length))
+        return catalogClient.catalog(Discover.withAge(cat, st.maxAge), Discover.request(cat, st.genre, discoverRaw.length))
             .then(metas => ({ metas: metas, done: !cat.skip }));
     }
 
@@ -685,7 +800,7 @@ Item {
             return;
         grid.status = "chargement";
         const skip = grid.metas.length;
-        client.catalog({ transportUrl: row.transportUrl, type: row.type, id: row.cid }, { skip: skip }).then(metas => {
+        catalogClient.catalog({ transportUrl: row.transportUrl, type: row.type, id: row.cid }, { skip: skip }).then(metas => {
             if (gridRow !== row)
                 return;
             const known = {};
@@ -1661,7 +1776,10 @@ Item {
             { section: "Lecture", key: "metaLang", label: "Fiches (résumés, titres)", action: "choice",
               value: settings.metaLang === "cinemeta" ? "Cinemeta (anglais)" : addons.some(a => !Addons.isCinemeta(a) && Addons.supports(a.manifest, "meta", "", "tt0000001"))
                      ? "Addon traduit d'abord" : "Addon traduit d'abord (aucun installé)" },
-            { section: "Lecture", key: "clearPositions", label: "Oublier les positions de lecture", value: "Effacer", action: "button" });
+            { section: "Lecture", key: "clearPositions", label: "Oublier les positions de lecture", value: "Effacer", action: "button" },
+            { section: "Mémoire", key: "flushCache", label: flushPending ? "Catalogues du jour : vidés, rechargés au retour à l'accueil"
+                                                                   : "Catalogues du jour en mémoire : " + DayCache.count(currentDayCache()) + " réponses",
+              value: "Vider", action: "button" });
         if (pc) {
             rows.push(
                 { section: "Lecture avec le PC", key: "quality", label: "Qualité en conversion par le PC", value: settings.maxWidth >= 1920 ? "1080p (réseau rapide)" : "720p (recommandé)", action: "choice" },
@@ -1726,6 +1844,7 @@ Item {
             settings.positions = "{}";
             toast("Positions de lecture effacées");
             break;
+        case "flushCache": flushDayCache(); break;
         case "speed": measureLinks(); break;
         case "trialNative":
         case "trialYoutube":
@@ -1880,9 +1999,17 @@ Item {
         property string metaLang: "translated" // fiches : addon traduit (TMDB...) avant Cinemeta
         property string pcMode: "auto"     // auto : PC utilise s'il repond ; off : jamais
         property string fbxAppToken: ""    // jeton Freebox OS (essais V2.1), jamais dans les journaux
+        property string dayCache: ""       // catalogues du jour (daycache.js), sans cle API
     }
 
     ListModel { id: rowsModel }
+
+    Timer {
+        // Catalogues du jour : enregistres peu apres la derniere reponse recue.
+        id: dayCacheSave
+        interval: 5000
+        onTriggered: app.saveDayCache()
+    }
 
     property int pcFailures: 0
     Timer {
@@ -2070,6 +2197,15 @@ Item {
                 item.volumeAdjusted.connect(v => { settings.volume = v; });
                 app.applySubtitles();
             }
+        }
+
+        PreloadOverlay {
+            id: preloadOverlay
+            visible: app.preloadShown && app.preloading && app.screen === "home"
+            done: app.preloadDone
+            total: app.preloadTotal
+            onVisibleChanged: if (visible) forceActiveFocus()
+            onDismissed: app.hidePreload()
         }
 
         Toast {
