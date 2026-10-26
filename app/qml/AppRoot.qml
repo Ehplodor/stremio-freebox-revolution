@@ -280,6 +280,8 @@ Item {
         settings.authKey = "";
         settings.accountEmail = "";
         authKey = "";
+        // Progression en attente : propre a ce compte, ne doit pas partir vers un autre.
+        libraryPending = {};
         refreshSettingsRows();
     }
 
@@ -1400,13 +1402,14 @@ Item {
         }
     }
 
+    // Promise toujours resolue (echec journalise), pour enchainer la deconnexion.
     function pushLibrary() {
         const items = Object.keys(libraryPending).map(k => libraryPending[k]);
         if (!items.length || !authKey)
-            return;
+            return Promise.resolve();
         libraryPushedAt = Date.now();
         const sent = libraryPending;
-        account.libraryPut(authKey, items).then(() => {
+        return account.libraryPut(authKey, items).then(() => {
             // Seuls les elements envoyes sont retires (d'autres ont pu arriver entre-temps).
             const rest = Object.assign({}, libraryPending);
             Object.keys(sent).forEach(k => { if (rest[k] === sent[k]) delete rest[k]; });
@@ -1570,6 +1573,7 @@ Item {
         screen = "account";
         accountPage.forceActiveFocus();
         accountPage.status = "";
+        accountPage.confirming = false;
         if (authKey) {
             accountPage.email = settings.accountEmail || "compte lié";
         } else {
@@ -1606,8 +1610,14 @@ Item {
         }).catch(e => accountPage.status = "Erreur : " + e.message);
     }
 
+    // Progression en attente envoyee d'abord, puis session fermee cote Stremio (au mieux).
     function unlink() {
+        const key = authKey;
+        const flushed = pushLibrary();
         forgetAccount();
+        flushed.then(() => account.logout(key))
+            .then(() => log("compte : session Stremio fermée"))
+            .catch(e => log("compte : déconnexion côté Stremio impossible (" + e.message + ")"));
         toast("Compte délié de ce Player");
         showTab(0);
         loadAddons();
