@@ -162,3 +162,87 @@ function cycle(list, value, step) {
     const i = list.indexOf(value);
     return list[((i === -1 ? 0 : i) + step + list.length) % list.length];
 }
+
+// ----- « Tous les catalogues » : catalogues des addons fusionnes, sans doublons -----
+
+const ALL_ID = "__all";
+const MAX_PARTS = 24;                    // requetes par page de la vue fusionnee
+
+// Catalogues fusionnables (genre obligatoire exclu : catalogues « par annee »).
+function mergeable(list) {
+    return list.filter(c => !c.kind && !c.genreRequired).slice(0, MAX_PARTS);
+}
+
+function allCatalog(list, type) {
+    const parts = mergeable(list.filter(c => c.type === type));
+    const genres = [];
+    parts.forEach(c => c.genres.forEach(g => { if (genres.indexOf(g) === -1) genres.push(g); }));
+    return { kind: "all", transportUrl: "", id: ALL_ID, type: type, name: "Tous les catalogues",
+             addonName: parts.length + " catalogues", genres: genres.sort(), genreRequired: false,
+             skip: true, parts: parts };
+}
+
+// Catalogues a interroger pour un genre ("" : tous).
+function allParts(catalog, genre) {
+    return catalog.parts.filter(c => !genre || c.genres.indexOf(genre) !== -1);
+}
+
+// Meme titre d'un addon a l'autre : identifiant IMDb, sinon nom et annee.
+function dedupeKey(meta) {
+    const id = String(meta.id || "");
+    if (/^tt\d+$/.test(id))
+        return id;
+    if (/^tt\d+$/.test(String(meta.imdb_id || "")))
+        return meta.imdb_id;
+    const name = String(meta.name || "").toLowerCase().replace(/[^a-z0-9À-ɏ]+/g, "");
+    return name ? "n:" + name + "|" + yearOf(meta) : "id:" + id;
+}
+
+// Titres nouveaux des listes, pris tour a tour (un de chaque catalogue).
+// known : { cle: true }, complete au passage ; byId : un seul catalogue, doublons par identifiant.
+function mergeNew(lists, known, byId) {
+    const out = [];
+    const longest = lists.reduce((n, l) => Math.max(n, l.length), 0);
+    for (let i = 0; i < longest; i++)
+        lists.forEach(l => {
+            const m = l[i];
+            if (!m)
+                return;
+            const k = byId ? "id:" + m.id : dedupeKey(m);
+            if (known[k])
+                return;
+            known[k] = true;
+            out.push(m);
+        });
+    return out;
+}
+
+// ----- Catalogue TMDB complet (cle API de l'utilisateur, tmdb.js) -----
+
+const TMDB_API_ID = "tmdb.discover";
+
+// genres : [{ id, name }] de TMDB pour ce type.
+function apiCatalog(type, genres) {
+    return { kind: "tmdbApi", transportUrl: "", id: TMDB_API_ID, type: type, name: "Tout TMDB",
+             addonName: "TMDB, votre clé", genres: (genres || []).map(g => g.name), genreIds: genres || [],
+             genreRequired: false, skip: true };
+}
+
+function genreId(catalog, name) {
+    const g = (catalog.genreIds || []).find(x => x.name === name);
+    return g ? g.id : "";
+}
+
+// Filtres de Decouvrir -> options de Tmdb.discoverUrl.
+function apiOptions(catalog, state, page) {
+    const d = DECADES.find(x => x.id === (state.decade || "")) || DECADES[0];
+    return {
+        genreId: genreId(catalog, state.genre),
+        from: d.from || 0,
+        to: d.to,
+        minRating: state.minRating || 0,
+        maxAge: state.maxAge || "",
+        providerId: state.provider || "",
+        page: page
+    };
+}

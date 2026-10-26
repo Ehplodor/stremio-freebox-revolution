@@ -15,6 +15,8 @@ import "../js/core/buffer.js" as Buffer
 import "../js/core/library.js" as Library
 import "../js/core/mkv.js" as Mkv
 import "../js/core/discover.js" as Discover
+import "../js/core/tmdb.js" as Tmdb
+import "../js/core/lzstring.js" as LZ
 
 // Racine de l'appli, embarquee dans le paquet FreeStore (main.qml) ; aussi chargeable depuis
 // l'agent du PC (lanceur bootstrap/, developpement).
@@ -403,18 +405,32 @@ Item {
 
     // ===================== Decouvrir =====================
 
-    // type, maxAge, catalog (transportUrl|id), genre, decade, minRating
-    property var discoverState: ({ type: "movie", maxAge: "", catalog: "", genre: "", decade: "", minRating: 0 })
+    // type, maxAge, catalog (transportUrl|id), genre, decade, minRating, provider (TMDB)
+    property var discoverState: ({ type: "movie", maxAge: "", catalog: "", genre: "", decade: "", minRating: 0, provider: "" })
     property var discoverRaw: []         // titres recus (avant filtres locaux)
     property var discoverToken: null
-    // Addon TMDB du filtre d'age, charge a la premiere ouverture de Decouvrir.
+    property var discoverKnown: ({})     // cles des titres recus (doublons)
+    property var discoverParts: []       // « Tous les catalogues » : [{ cat, skip, done }]
+    property int discoverPage: 0         // catalogue TMDB complet : derniere page recue
+    property int discoverAutoPages: 0
+    // Addon TMDB public (filtre d'age sans cle), charge a la premiere ouverture de Decouvrir.
     property var tmdbAddon: null
     property bool tmdbLoading: false
+    // Cle API TMDB lue dans l'addon TMDB du compte ; genres et services par type.
+    property string tmdbKey: ""
+    property var tmdbApi: ({})           // { movie: { genres, providers }, series: ... }
 
-    // Avec un age maximum : catalogues TMDB filtres par age ; sinon ceux des addons.
+    // Catalogues proposes : TMDB complet (avec cle), « Tous les catalogues », TMDB public, addons.
+    // Avec un age maximum : seulement TMDB, qui filtre lui-meme.
     function discoverCatalogs() {
-        const list = discoverState.maxAge ? Discover.ageCatalogs(tmdbAddon) : Discover.catalogs(addons);
-        return list.filter(c => c.type === discoverState.type);
+        const type = discoverState.type;
+        const api = tmdbKey && tmdbApi[type] ? [Discover.apiCatalog(type, tmdbApi[type].genres)] : [];
+        const tmdb = api.length ? api : Discover.ageCatalogs(tmdbAddon).filter(c => c.type === type);
+        if (discoverState.maxAge)
+            return tmdb;
+        const own = Discover.catalogs(addons).filter(c => c.type === type);
+        const all = own.length > 1 ? [Discover.allCatalog(own, type)] : [];
+        return (api.length ? api.concat(all) : all.concat(tmdb)).concat(own);
     }
 
     function loadTmdbAddon() {
@@ -431,16 +447,46 @@ Item {
         });
     }
 
+    // Cle de l'addon TMDB du compte : genres et services de streaming (France) de chaque type.
+    function loadTmdbKey() {
+        const key = Tmdb.apiKey(addons, LZ.decompressFromEncodedURIComponent);
+        if (key === tmdbKey)
+            return;
+        tmdbKey = key;
+        tmdbApi = {};
+        if (!key)
+            return;
+        log("TMDB : clé API trouvée dans l'addon TMDB du compte");
+        ["movie", "series"].forEach(type => {
+            Promise.all([Http.fetchJson(Tmdb.genresUrl(key, type)),
+                         Http.fetchJson(Tmdb.providersUrl(key, type)).catch(() => null)]).then(r => {
+                if (tmdbKey !== key)
+                    return;
+                const api = Object.assign({}, tmdbApi);
+                api[type] = { genres: r[0].genres || [], providers: Tmdb.providers(r[1], 20) };
+                tmdbApi = api;
+                if (screen === "discover" && discoverState.type === type) {
+                    refreshDiscoverFilters();
+                    if (!discoverState.catalog)
+                        loadDiscover(true);  // le catalogue par defaut devient TMDB complet
+                }
+            }).catch(e => log("TMDB : clé refusée ou service indisponible (" + e + ")"));
+        });
+    }
+
     // Titre TMDB : fiche et sources via son identifiant IMDb (Cinemeta, addons de sources).
     function openDiscovered(meta) {
         const type = meta.type || discoverState.type;
-        if (!Discover.isTmdbId(meta.id) || !tmdbAddon) {
+        if (!Discover.isTmdbId(meta.id) || (!tmdbKey && !tmdbAddon)) {
             openMeta(type, meta.id);
             return;
         }
-        client.meta([tmdbAddon], type, meta.id).then(m => {
-            if (m.imdb_id)
-                openMeta(type, m.imdb_id);
+        const imdb = tmdbKey
+            ? Http.fetchJson(Tmdb.externalIdsUrl(tmdbKey, type, meta.id)).then(r => r.imdb_id)
+            : client.meta([tmdbAddon], type, meta.id).then(m => m.imdb_id);
+        imdb.then(id => {
+            if (id)
+                openMeta(type, id);
             else
                 toast("« " + meta.name + " » : titre inconnu d'IMDb, sources introuvables", "error");
         }).catch(e => toast("Fiche TMDB indisponible : " + e.message, "error"));
@@ -453,8 +499,9 @@ Item {
 
     // opts (facultatif) : { type, genre } (genre d'une fiche) ; null : garder les filtres.
     function openDiscover(opts) {
+        loadTmdbKey();
         if (opts) {
-            const st = Object.assign({}, discoverState, { type: opts.type || discoverState.type, catalog: "", genre: "" });
+            const st = Object.assign({}, discoverState, { type: opts.type || discoverState.type, catalog: "", genre: "", provider: "" });
             discoverState = st;
             const cat = currentDiscoverCatalog();
             if (cat && opts.genre && cat.genres.indexOf(opts.genre) !== -1)
@@ -473,11 +520,12 @@ Item {
         const all = Discover.catalogs(addons);
         const st = discoverState;
         const cat = currentDiscoverCatalog();
+        const api = !!cat && cat.kind === "tmdbApi";
         const opt = (id, label) => ({ id: id, label: label });
         const filters = [
             { key: "type", label: "Type", value: st.type, options: Discover.types(all).map(t => opt(t, Discover.typeLabel(t))) }
         ];
-        if (tmdbAddon)
+        if (tmdbAddon || tmdbKey)
             filters.push({ key: "maxAge", label: "Âge max", value: st.maxAge, options: Discover.AGES.map(a => opt(a.id, a.label)) });
         filters.push(
             { key: "catalog", label: "Catalogue", value: cat ? cat.transportUrl + "|" + cat.id : "",
@@ -486,46 +534,85 @@ Item {
             filters.push({ key: "genre", label: /^\d{4}$/.test(cat.genres[0]) ? "Année" : "Genre",
                            value: st.genre || (cat.genreRequired ? cat.genres[0] : ""),
                            options: (cat.genreRequired ? [] : [opt("", "Tous")]).concat(cat.genres.map(g => opt(g, g))) });
+        const providers = api && tmdbApi[st.type] ? tmdbApi[st.type].providers : [];
+        if (providers.length)
+            filters.push({ key: "provider", label: "Service", value: st.provider,
+                           options: [opt("", "Tous")].concat(providers.map(p => opt(p.id, p.name))) });
         filters.push({ key: "decade", label: "Période", value: st.decade, options: Discover.DECADES.map(d => opt(d.id, d.label)) });
-        filters.push({ key: "minRating", label: "Note", value: st.minRating, options: Discover.RATINGS.map(r => opt(r.id, r.label)) });
+        filters.push({ key: "minRating", label: "Note", value: st.minRating,
+                       options: Discover.RATINGS.map(r => opt(r.id, api ? r.label.replace("IMDb", "TMDB") : r.label)) });
         filters.forEach(f => {
             const o = f.options.find(x => x.id === f.value);
             f.valueLabel = o ? o.label.split("  ·  ")[0] : "—";
         });
         discover.filters = filters;
-        discover.hint = st.maxAge ? "âge : classification américaine, catalogues TMDB" : "";
+        discover.hint = api ? (st.maxAge ? "tout TMDB  ·  âge : classification française (séries : américaine)" : "tout TMDB")
+                      : cat && cat.kind === "all" ? "fusion de " + cat.parts.length + " catalogues, sans doublons"
+                      : st.maxAge ? "âge : classification américaine, catalogues TMDB" : "";
     }
 
     function discoverChanged(key, value) {
         const st = Object.assign({}, discoverState);
         st[key] = value;
         if (key === "type")
-            st.catalog = "", st.genre = "";
+            st.catalog = "", st.genre = "", st.provider = "";
         if (key === "catalog")
-            st.genre = "";
-        if (key === "maxAge" && !value !== !discoverState.maxAge)
-            st.catalog = "", st.genre = "";  // catalogues TMDB <-> catalogues des addons
+            st.genre = "", st.provider = "";
+        if (key === "maxAge" && !value !== !discoverState.maxAge && !tmdbKey)
+            st.catalog = "", st.genre = "";  // catalogues TMDB publics <-> catalogues des addons
         discoverState = st;
         refreshDiscoverFilters();
-        if (key === "decade" || key === "minRating") {
+        const cat = currentDiscoverCatalog();
+        if ((key === "decade" || key === "minRating") && !(cat && cat.kind === "tmdbApi")) {
             showDiscover(true);
             return;
         }
         loadDiscover(true);
     }
 
-    // Filtres locaux appliques ; trop peu de titres : pages suivantes chargees d'elles-memes.
+    // Filtres locaux appliques (TMDB complet : deja filtre par TMDB) ; trop peu de titres :
+    // pages suivantes chargees d'elles-memes.
     function showDiscover(fillUp) {
-        const list = Discover.apply(discoverRaw, discoverState);
+        const cat = currentDiscoverCatalog();
+        const list = cat && cat.kind === "tmdbApi" ? discoverRaw : Discover.apply(discoverRaw, discoverState);
         discover.metas = list;
         if (fillUp && list.length < 24 && discover.status === "")
             loadDiscover(false, true);
+    }
+
+    // Une page du catalogue courant -> Promise<{ metas | lists, done }>.
+    function fetchDiscoverPage(cat) {
+        const st = discoverState;
+        if (cat.kind === "tmdbApi") {
+            const page = discoverPage + 1;
+            return Http.fetchJson(Tmdb.discoverUrl(tmdbKey, st.type, Discover.apiOptions(cat, st, page))).then(r => {
+                discoverPage = page;
+                return { metas: Tmdb.metas(r, st.type), done: Tmdb.lastPage(r) };
+            });
+        }
+        if (cat.kind === "all") {
+            const active = discoverParts.filter(p => !p.done);
+            return Promise.all(active.map(p => client.catalog(p.cat, Discover.request(p.cat, st.genre, p.skip)).then(metas => {
+                p.skip += metas.length;
+                p.done = !metas.length || !p.cat.skip;
+                return metas;
+            }, () => {
+                p.done = true;
+                return [];
+            }))).then(lists => ({ lists: lists, done: discoverParts.every(p => p.done) }));
+        }
+        return client.catalog(Discover.withAge(cat, st.maxAge), Discover.request(cat, st.genre, discoverRaw.length))
+            .then(metas => ({ metas: metas, done: !cat.skip }));
     }
 
     function loadDiscover(reset, auto) {
         const cat = currentDiscoverCatalog();
         if (reset) {
             discoverRaw = [];
+            discoverKnown = {};
+            discoverPage = 0;
+            discoverParts = cat && cat.kind === "all"
+                ? Discover.allParts(cat, discoverState.genre).map(c => ({ cat: c, skip: 0, done: false })) : [];
             discover.metas = [];
             discoverToken = {};
             discover.status = "";
@@ -541,22 +628,19 @@ Item {
             return;                       // filtres tres selectifs : la suite en descendant
         const token = discoverToken;
         discover.status = "chargement";
-        const skip = discoverRaw.length;
-        client.catalog(Discover.withAge(cat, discoverState.maxAge), Discover.request(cat, discoverState.genre, skip)).then(metas => {
+        fetchDiscoverPage(cat).then(page => {
             if (discoverToken !== token)
                 return;
-            const known = {};
-            discoverRaw.forEach(m => { known[m.id] = true; });
-            const fresh = metas.filter(m => !known[m.id]);
+            const fresh = Discover.mergeNew(page.lists || [page.metas], discoverKnown, !page.lists);
             discoverRaw = discoverRaw.concat(fresh);
-            discover.status = fresh.length && cat.skip ? "" : "fin";
+            discover.status = page.done || (!fresh.length && cat.kind !== "all") ? "fin" : "";
             showDiscover(true);
         }).catch(e => {
+            log("Découvrir : " + e);
             if (discoverToken === token)
                 discover.status = discoverRaw.length ? "fin" : "erreur";
         });
     }
-    property int discoverAutoPages: 0
 
     // Fiche : acteur, realisateur, scenariste -> recherche ; genre -> Decouvrir.
     function openPerson(name) {

@@ -14,6 +14,9 @@ Chaque fichier qui reprend du code de ces projets conserve leur mention de copyr
 - `app/js/core/playback.js` : logique de `stremio-video/src/withStreamingServer`
   (convertStream, createTorrent, buildProxyUrl, canPlayProbe), Copyright (c) 2018 Smart Code OOD.
 
+- `app/js/core/lzstring.js` : décompression de [lz-string](https://github.com/pieroxy/lz-string)
+  1.5.0 (configuration de l'addon TMDB), Copyright (c) 2013 pieroxy, licence MIT.
+
 Aucun code de `stremio-web` ni de `stremio-shell` (GPL) n'est repris : ils
 servent uniquement de référence d'ergonomie.
 

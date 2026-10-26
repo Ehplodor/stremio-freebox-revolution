@@ -56,3 +56,34 @@ test("age maximum : catalogues TMDB filtres par l'addon", () => {
     assert.ok(discover.isTmdbId("tmdb:862"));
     assert.ok(!discover.isTmdbId("tt0114709"));
 });
+
+test("tous les catalogues : fusion tour a tour et doublons", () => {
+    const cats = [
+        { transportUrl: "a", id: "top", type: "movie", genres: ["Drama", "Action"], genreRequired: false },
+        { transportUrl: "b", id: "netflix", type: "movie", genres: ["Comedy"], genreRequired: false },
+        { transportUrl: "a", id: "year", type: "movie", genres: ["2024"], genreRequired: true },
+        { transportUrl: "a", id: "top", type: "series", genres: [], genreRequired: false }
+    ];
+    const all = discover.allCatalog(cats, "movie");
+    assert.equal(all.kind, "all");
+    assert.deepEqual(plain(all.parts.map(c => c.id)), ["top", "netflix"]);
+    assert.deepEqual(plain(all.genres), ["Action", "Comedy", "Drama"]);
+    assert.deepEqual(plain(discover.allParts(all, "Comedy").map(c => c.id)), ["netflix"]);
+    const known = {};
+    const first = discover.mergeNew([
+        [{ id: "tt1", name: "A" }, { id: "tt2", name: "B" }],
+        [{ id: "tt2", name: "B" }, { id: "x:9", name: "Le Film", releaseInfo: "2001" }, { id: "y:3", name: "le film !", year: 2001 }]
+    ], known);
+    assert.deepEqual(plain(first.map(m => m.id)), ["tt1", "tt2", "x:9"]);
+    assert.equal(discover.mergeNew([[{ id: "tmdb:5", imdb_id: "tt1", name: "A" }]], known).length, 0);
+    assert.equal(discover.mergeNew([[{ id: "tmdb:7", name: "Le Film", year: 2001 }]], known, true).length, 1, "un seul catalogue : par identifiant");
+});
+
+test("catalogue TMDB complet : filtres envoyes a TMDB", () => {
+    const cat = discover.apiCatalog("movie", [{ id: 28, name: "Action" }, { id: 16, name: "Animation" }]);
+    assert.deepEqual(plain(cat.genres), ["Action", "Animation"]);
+    assert.deepEqual(plain(discover.apiOptions(cat, { genre: "Animation", decade: "2010", minRating: 7, maxAge: "PG", provider: 8 }, 3)),
+                     { genreId: 16, from: 2010, to: 2019, minRating: 7, maxAge: "PG", providerId: 8, page: 3 });
+    assert.deepEqual(plain(discover.apiOptions(cat, {}, 1)),
+                     { genreId: "", from: 0, to: 9999, minRating: 0, maxAge: "", providerId: "", page: 1 });
+});
