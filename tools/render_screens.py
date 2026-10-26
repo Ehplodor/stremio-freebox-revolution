@@ -9,7 +9,7 @@ L'appli tourne pour de vrai (addons, Cinemeta... : il faut Internet), sans PC pa
   python tools/render_screens.py --pc 192.168.0.16  # avec l'agent du PC
   python tools/render_screens.py --strict           # code de sortie 1 si des textes se chevauchent
 
-Ecrans : home, discover, credits:<imdb>, home:down (tuile « Tout voir »), grid, search, settings, sort, account, movie:<imdb>, series:<imdb>, player.
+Ecrans : home, discover, discover:<age> (G, PG, PG-13, R), credits:<imdb>, home:down (tuile « Tout voir »), grid, search, settings, sort, account, movie:<imdb>, series:<imdb>, player.
 Chaque capture est suivie de la liste des textes visibles qui se chevauchent (bug du 20/10/2026 :
 titre de rangee sous les affiches).
 """
@@ -138,6 +138,11 @@ def render(screen, out_dir, pc, wait_s):
                                              for k in (QEvent.KeyPress, QEvent.KeyRelease)])
         elif screen in ("home", "discover", "search", "settings"):
             QMetaObject.invokeMethod(app, "showTab", Q_ARG(QVariant, ["home", "discover", "search", "settings"].index(screen)))
+        elif screen.startswith("discover:"):
+            # Decouvrir avec un age maximum (G, PG, PG-13, R), une fois l'addon TMDB charge
+            QMetaObject.invokeMethod(app, "showTab", Q_ARG(QVariant, 1))
+            QTimer.singleShot(4000, lambda: QMetaObject.invokeMethod(app, "discoverChanged", Q_ARG(QVariant, "maxAge"),
+                                                                     Q_ARG(QVariant, screen.split(":", 1)[1])))
         elif screen.startswith("credits:"):
             # Fiche puis panneau « Distribution et genres » (Droite x3, OK)
             from PyQt5.QtCore import Qt, QEvent

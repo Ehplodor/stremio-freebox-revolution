@@ -103,6 +103,49 @@ function apply(metas, filters) {
     });
 }
 
+// Age maximum : ni Cinemeta ni les catalogues des addons courants ne donnent la classification.
+// L'addon TMDB (instance publique d'ElfHosted, sans cle) sait filtrer ses catalogues cote serveur
+// (option « ageRating » de sa configuration, classification americaine G / PG / PG-13 / R ; pour
+// les series TV-G / TV-PG / TV-14 / TV-MA). Avec un age choisi, Decouvrir passe sur ses catalogues
+// « Populaire » et « Annee » en francais.
+const TMDB_BASE = "https://tmdb.elfhosted.com/";
+const TMDB_LANGUAGE = "fr-FR";
+const AGE_CATALOGS = ["tmdb.top", "tmdb.year"];
+const AGES = [
+    { id: "", label: "Sans limite" },
+    { id: "G", label: "Tous publics" },
+    { id: "PG", label: "10 ans" },
+    { id: "PG-13", label: "12 ans" },
+    { id: "R", label: "16 ans" }
+];
+
+function tmdbUrl(age) {
+    const config = { language: TMDB_LANGUAGE };
+    if (age)
+        config.ageRating = age;
+    return TMDB_BASE + encodeURIComponent(JSON.stringify(config)) + "/manifest.json";
+}
+const TMDB_URL = tmdbUrl("");
+
+// Catalogues filtrables par age, depuis l'addon TMDB charge par tmdbUrl("").
+function ageCatalogs(tmdbAddon) {
+    if (!tmdbAddon)
+        return [];
+    return catalogs([tmdbAddon]).filter(c => AGE_CATALOGS.indexOf(c.id) !== -1)
+        .map(c => Object.assign(c, { addonName: "TMDB" }));
+}
+
+// Le meme catalogue, filtre par l'addon sur l'age.
+function withAge(catalog, age) {
+    if (!age || catalog.transportUrl !== TMDB_URL)
+        return catalog;
+    return Object.assign({}, catalog, { transportUrl: tmdbUrl(age) });
+}
+
+function isTmdbId(id) {
+    return /^tmdb:/.test(String(id));
+}
+
 // Extra a demander a l'addon pour un catalogue et un genre ("" = tous).
 function request(catalog, genre, skip) {
     const extra = {};

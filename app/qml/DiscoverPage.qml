@@ -2,7 +2,7 @@ import QtQuick 2.15
 import "../js/theme.js" as T
 import "../js/core/discover.js" as Discover
 
-// Decouvrir : filtres en haut (Type, Catalogue, Genre / Annee, Decennie, Note), grille en dessous.
+// Decouvrir : filtres en haut (Type, Age max, Catalogue, Genre / Annee, Decennie, Note), grille en dessous.
 // Filtres : Gauche / Droite pour passer de l'un a l'autre, OK pour ouvrir la liste des choix,
 // Bas pour la grille. Les filtres sont recalcules par AppRoot (setFilters) ; chaque changement
 // emet changed(key, value).
@@ -13,6 +13,7 @@ FocusScope {
     property var filters: []
     property var metas: []
     property string status: ""           // "", "chargement", "fin", "erreur"
+    property string hint: ""             // origine d'un filtre (age : TMDB)
     property var progressOf: null
     signal changed(string key, var value)
     signal activated(var meta)
@@ -79,9 +80,10 @@ FocusScope {
 
     Text {
         anchors { left: filterBar.left; top: filterBar.bottom; topMargin: 8 }
-        text: page.status === "chargement" ? "Chargement…"
+        text: (page.status === "chargement" ? "Chargement…"
               : page.metas.length ? page.metas.length + " titres" + (page.status === "" ? "  ·  la suite se charge en descendant" : "")
-              : page.status === "erreur" ? "Catalogue indisponible" : "Aucun titre avec ces filtres"
+              : page.status === "erreur" ? "Catalogue indisponible" : "Aucun titre avec ces filtres")
+              + (page.hint ? "  ·  " + page.hint : "")
         color: T.textDim
         font.pixelSize: T.fontTiny + 1
     }

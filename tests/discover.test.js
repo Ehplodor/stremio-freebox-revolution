@@ -38,3 +38,21 @@ test("filtres locaux : decennie et note", () => {
     assert.deepEqual(plain(discover.apply(metas, { decade: "1990", minRating: 7 }).map(m => m.id)), ["c"]);
     assert.equal(discover.cycle(["x", "y", "z"], "z", 1), "x");
 });
+
+test("age maximum : catalogues TMDB filtres par l'addon", () => {
+    const tmdb = { transportUrl: discover.tmdbUrl(""), manifest: load.fixture("tmdb-fr-manifest.json") };
+    assert.equal(discover.tmdbUrl(""), "https://tmdb.elfhosted.com/%7B%22language%22%3A%22fr-FR%22%7D/manifest.json");
+    const list = discover.ageCatalogs(tmdb);
+    assert.deepEqual(plain(list.map(c => c.type + "/" + c.id)), ["movie/tmdb.top", "series/tmdb.top", "movie/tmdb.year", "series/tmdb.year"]);
+    assert.equal(list[0].addonName, "TMDB");
+    assert.ok(list[0].skip);
+    assert.equal(discover.ageCatalogs(null).length, 0);
+    const pg = discover.withAge(list[0], "PG");
+    assert.equal(pg.transportUrl, "https://tmdb.elfhosted.com/%7B%22language%22%3A%22fr-FR%22%2C%22ageRating%22%3A%22PG%22%7D/manifest.json");
+    assert.equal(pg.id, "tmdb.top");
+    assert.equal(discover.withAge(list[0], ""), list[0]);
+    const other = { transportUrl: CINEMETA.transportUrl, id: "top" };
+    assert.equal(discover.withAge(other, "PG"), other, "seul l'addon TMDB connait le filtre");
+    assert.ok(discover.isTmdbId("tmdb:862"));
+    assert.ok(!discover.isTmdbId("tt0114709"));
+});
