@@ -83,7 +83,7 @@ test("catalogue TMDB complet : filtres envoyes a TMDB", () => {
     const cat = discover.apiCatalog("movie", [{ id: 28, name: "Action" }, { id: 16, name: "Animation" }]);
     assert.deepEqual(plain(cat.genres), ["Action", "Animation"]);
     assert.deepEqual(plain(discover.apiOptions(cat, { genre: "Animation", decade: "2010", minRating: 7, maxAge: "PG", provider: 8 }, 3)),
-                     { genreId: 16, from: 2010, to: 2019, minRating: 7, maxAge: "PG", providerId: 8, page: 3 });
+                     { genreId: 16, from: 2010, to: 2019, minRating: 7, maxAge: "PG", ageCountry: "", providerId: 8, page: 3 });
     assert.deepEqual(plain(discover.apiOptions(cat, {}, 1)),
-                     { genreId: "", from: 0, to: 9999, minRating: 0, maxAge: "", providerId: "", page: 1 });
+                     { genreId: "", from: 0, to: 9999, minRating: 0, maxAge: "", ageCountry: "", providerId: "", page: 1 });
 });

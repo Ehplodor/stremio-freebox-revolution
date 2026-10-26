@@ -412,6 +412,7 @@ Item {
     property var discoverKnown: ({})     // cles des titres recus (doublons)
     property var discoverParts: []       // « Tous les catalogues » : [{ cat, skip, done }]
     property int discoverPage: 0         // catalogue TMDB complet : derniere page recue
+    property string discoverAgeCountry: "" // "US" : aucun film en classification francaise, repli
     property int discoverAutoPages: 0
     // Addon TMDB public (filtre d'age sans cle), charge a la premiere ouverture de Decouvrir.
     property var tmdbAddon: null
@@ -546,7 +547,9 @@ Item {
             f.valueLabel = o ? o.label.split("  ·  ")[0] : "—";
         });
         discover.filters = filters;
-        discover.hint = api ? (st.maxAge ? "tout TMDB  ·  âge : classification française (séries : américaine)" : "tout TMDB")
+        discover.hint = api ? (!st.maxAge ? "tout TMDB"
+                               : st.type === "series" || discoverAgeCountry ? "tout TMDB  ·  âge : classification américaine"
+                               : "tout TMDB  ·  âge : classification française")
                       : cat && cat.kind === "all" ? "fusion de " + cat.parts.length + " catalogues, sans doublons"
                       : st.maxAge ? "âge : classification américaine, catalogues TMDB" : "";
     }
@@ -585,9 +588,17 @@ Item {
         const st = discoverState;
         if (cat.kind === "tmdbApi") {
             const page = discoverPage + 1;
-            return Http.fetchJson(Tmdb.discoverUrl(tmdbKey, st.type, Discover.apiOptions(cat, st, page))).then(r => {
+            const opts = Discover.apiOptions(cat, Object.assign({}, st, { ageCountry: discoverAgeCountry }), page);
+            return Http.fetchJson(Tmdb.discoverUrl(tmdbKey, st.type, opts)).then(r => {
+                const metas = Tmdb.metas(r, st.type);
+                if (!metas.length && page === 1 && st.maxAge && st.type === "movie" && !discoverAgeCountry) {
+                    log("Découvrir : aucun film en classification française, repli sur l'américaine");
+                    discoverAgeCountry = "US";
+                    refreshDiscoverFilters();
+                    return fetchDiscoverPage(cat);
+                }
                 discoverPage = page;
-                return { metas: Tmdb.metas(r, st.type), done: Tmdb.lastPage(r) };
+                return { metas: metas, done: Tmdb.lastPage(r) };
             });
         }
         if (cat.kind === "all") {
@@ -611,6 +622,10 @@ Item {
             discoverRaw = [];
             discoverKnown = {};
             discoverPage = 0;
+            if (discoverAgeCountry) {
+                discoverAgeCountry = "";
+                refreshDiscoverFilters();
+            }
             discoverParts = cat && cat.kind === "all"
                 ? Discover.allParts(cat, discoverState.genre).map(c => ({ cat: c, skip: 0, done: false })) : [];
             discover.metas = [];

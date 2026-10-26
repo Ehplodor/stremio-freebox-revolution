@@ -242,6 +242,7 @@ function apiOptions(catalog, state, page) {
         to: d.to,
         minRating: state.minRating || 0,
         maxAge: state.maxAge || "",
+        ageCountry: state.ageCountry || "",
         providerId: state.provider || "",
         page: page
     };

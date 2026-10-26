@@ -77,18 +77,31 @@ function providers(response, max) {
         .map(p => ({ id: p.provider_id, name: p.provider_name }));
 }
 
-// Age maximum (memes choix que discover.js, codes americains) -> classifications acceptees.
-// Films : classification francaise ; series : TMDB ne connait que les codes americains TV-*.
-const MOVIE_AGES = { "G": ["U"], "PG": ["U", "10"], "PG-13": ["U", "10", "12"], "R": ["U", "10", "12", "16"] };
+// Age maximum (memes choix que discover.js, codes americains) -> filtre de classification.
+// Films : classification francaise de TMDB (TP, 10, 12, 16, 18 : « certification.lte » suit cet
+// ordre) ; « Tous publics » s'ecrit TP (et non U). Series : TMDB ne filtre que sur les codes
+// americains TV-*, comme l'addon TMDB (liste « a|b »). ageCountry "US" : films en codes
+// americains aussi (repli quand la classification francaise ne donne rien).
+const MOVIE_AGES_FR = { "G": "TP", "PG": "10", "PG-13": "12", "R": "16" };
+const MOVIE_AGES_US = { "G": ["G"], "PG": ["G", "PG"], "PG-13": ["G", "PG", "PG-13"], "R": ["G", "PG", "PG-13", "R"] };
 const TV_AGES = { "G": ["TV-Y", "TV-Y7", "TV-G"], "PG": ["TV-Y", "TV-Y7", "TV-G", "TV-PG"],
                   "PG-13": ["TV-Y", "TV-Y7", "TV-G", "TV-PG", "TV-14"],
                   "R": ["TV-Y", "TV-Y7", "TV-G", "TV-PG", "TV-14", "TV-MA"] };
 
-// opts : { genreId, from, to (annees), minRating, maxAge, providerId, page (1..) }
+function ageParams(type, maxAge, ageCountry) {
+    if (!maxAge || !MOVIE_AGES_FR[maxAge])
+        return {};
+    if (type === "series")
+        return { certification_country: "US", certification: TV_AGES[maxAge].join("|") };
+    if (ageCountry === "US")
+        return { certification_country: "US", certification: MOVIE_AGES_US[maxAge].join("|") };
+    return { certification_country: REGION, "certification.lte": MOVIE_AGES_FR[maxAge] };
+}
+
+// opts : { genreId, from, to (annees), minRating, maxAge, ageCountry, providerId, page (1..) }
 function discoverUrl(key, type, opts) {
     const tv = type === "series";
     const o = opts || {};
-    const ages = (tv ? TV_AGES : MOVIE_AGES)[o.maxAge || ""];
     const params = {
         api_key: key,
         language: LANGUAGE,
@@ -99,11 +112,10 @@ function discoverUrl(key, type, opts) {
         "vote_average.gte": o.minRating || "",
         // une note sur trois votes ne veut rien dire
         "vote_count.gte": o.minRating ? 150 : "",
-        certification_country: ages ? (tv ? "US" : REGION) : "",
-        certification: ages ? ages.join("|") : "",
         with_watch_providers: o.providerId || "",
         watch_region: o.providerId ? REGION : ""
     };
+    Object.assign(params, ageParams(type, o.maxAge, o.ageCountry));
     const datePrefix = tv ? "first_air_date" : "primary_release_date";
     if (o.from)
         params[datePrefix + ".gte"] = o.from + "-01-01";

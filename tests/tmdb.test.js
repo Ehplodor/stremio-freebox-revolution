@@ -35,12 +35,21 @@ test("adresse de recherche avancee : genre, annees, note, age, service", () => {
     assert.equal(p["primary_release_date.lte"], "2019-12-31");
     assert.equal(p["vote_average.gte"], "7");
     assert.equal(p.certification_country, "FR");
-    assert.equal(p.certification, "U|10");
+    assert.equal(p["certification.lte"], "10");
+    assert.ok(!("certification" in p));
     assert.equal(p.with_watch_providers, "8");
     assert.equal(p.watch_region, "FR");
     assert.equal(p.page, "2");
     const tv = Object.fromEntries(new URL(tmdb.discoverUrl(KEY, "series", { from: 0, to: 9999, maxAge: "G" })).searchParams);
     assert.equal(tv.certification_country, "US");
+    assert.equal(tv.certification, "TV-Y|TV-Y7|TV-G");
+    const g = Object.fromEntries(new URL(tmdb.discoverUrl(KEY, "movie", { maxAge: "G" })).searchParams);
+    assert.equal(g["certification.lte"], "TP", "tous publics : TP dans TMDB");
+    const us = Object.fromEntries(new URL(tmdb.discoverUrl(KEY, "movie", { maxAge: "PG-13", ageCountry: "US" })).searchParams);
+    assert.equal(us.certification_country, "US");
+    assert.equal(us.certification, "G|PG|PG-13");
+    const none = Object.fromEntries(new URL(tmdb.discoverUrl(KEY, "movie", { maxAge: "" })).searchParams);
+    assert.ok(!("certification_country" in none));
     assert.ok(!("first_air_date.gte" in tv) && !("first_air_date.lte" in tv) && !("with_genres" in tv));
 });
 
