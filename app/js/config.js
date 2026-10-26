@@ -40,6 +40,8 @@ const AUTOTEST = null;
 
 // Developpement : ignorer tout PC, comme une box seule (tools/fbx_qml_run.py --sans-pc).
 const NO_PC = false;
+// Developpement : adresse du PC imposee (ex. une adresse eteinte : tools/fbx_qml_run.py --pc).
+const PC_OVERRIDE = "";
 
 // Journal de l'element qui a le focus (verification des touches a distance).
 const DEBUG_FOCUS = true;

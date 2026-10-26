@@ -60,6 +60,40 @@ function request(method, url, body, asText, timeoutMs) {
     });
 }
 
+// Octets [start, start + length) d'un fichier (requete Range) -> Promise<Uint8Array>.
+function fetchBytes(url, start, length, timeoutMs) {
+    const timeout = timeoutMs || 15000;
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        let finished = false;
+        const timer = startTimer(timeout, () => {
+            if (finished)
+                return;
+            finished = true;
+            xhr.abort();
+            reject(new Error("pas de réponse après " + timeout / 1000 + " s"));
+        });
+        xhr.responseType = "arraybuffer";
+        xhr.onreadystatechange = () => {
+            if (xhr.readyState !== XMLHttpRequest.DONE || finished)
+                return;
+            finished = true;
+            timer.stop();
+            timer.destroy();
+            if ((xhr.status !== 200 && xhr.status !== 206) || !xhr.response) {
+                reject(new Error("HTTP " + xhr.status + " (" + hostOf(url) + ")"));
+                return;
+            }
+            const bytes = new Uint8Array(xhr.response);
+            // Serveur sans Range (200) : on ne garde que la partie demandee.
+            resolve(xhr.status === 200 && start > 0 ? bytes.subarray(start, start + length) : bytes.subarray(0, length));
+        };
+        xhr.open("GET", url);
+        xhr.setRequestHeader("Range", "bytes=" + start + "-" + (start + length - 1));
+        xhr.send();
+    });
+}
+
 function fetchJson(url) {
     return request("GET", url);
 }

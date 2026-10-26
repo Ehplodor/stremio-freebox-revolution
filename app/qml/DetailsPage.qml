@@ -20,6 +20,23 @@ FocusScope {
     signal streamChosen(var item)
     signal playBest()
     signal sortRequested()
+    signal personChosen(string name)
+    signal genreChosen(string genre)
+
+    // Distribution et genres de la fiche (Cinemeta : director, writer, cast, genres).
+    readonly property var credits: {
+        const m = meta || {};
+        const out = [];
+        const add = (role, list, kind) => (Array.isArray(list) ? list : []).forEach(n => {
+            if (n && !out.some(x => x.name === n && x.kind === kind))
+                out.push({ role: role, name: n, kind: kind });
+        });
+        add("Réalisation", m.director, "person");
+        add("Scénario", m.writer, "person");
+        add("Avec", m.cast, "person");
+        add("Genre", m.genres || m.genre, "genre");
+        return out;
+    }
 
     readonly property bool isSeries: episodes.length > 0
     readonly property var seasons: {
@@ -37,6 +54,18 @@ FocusScope {
         resumeText = "";
         actions.currentIndex = 0;
         actions.forceActiveFocus();
+    }
+
+    // Saison et episode affiches sur la video donnee (reprise de la serie).
+    function showEpisode(videoId) {
+        const v = episodes.find(e => e.id === videoId);
+        if (!v)
+            return;
+        seasonIndex = Math.max(0, seasons.indexOf(v.season));
+        seasonTabs.currentIndex = seasonIndex;
+        const i = seasonEpisodes.findIndex(e => e.id === videoId);
+        episodeList.currentIndex = Math.max(0, i);
+        episodeList.positionViewAtIndex(episodeList.currentIndex, ListView.Center);
     }
 
     function focusStreams() {
@@ -195,17 +224,19 @@ FocusScope {
         focus: true
         // Liste fixe : la recalculer (nombre de sources, reprise) remettrait la selection sur "Lecture"
         // a chaque reponse d'addon. Seuls les libelles changent (label()).
-        model: ["play", "sources", "sort"]
+        model: ["play", "sources", "sort", "credits"]
         function label(key) {
             if (key === "play")
                 return page.resumeText ? "▶  " + page.resumeText : "▶  Lecture";
             if (key === "sources")
                 return "Sources" + (page.streams.length ? "  (" + page.streams.length + ")" : "");
+            if (key === "credits")
+                return "Distribution et genres";
             return "Tri des sources";
         }
         delegate: Rectangle {
             readonly property bool focused: actions.activeFocus && ListView.isCurrentItem
-            readonly property bool enabledAction: modelData === "sort" || page.streams.length > 0
+            readonly property bool enabledAction: modelData === "sort" || (modelData === "credits" ? page.credits.length > 0 : page.streams.length > 0)
             height: 52
             width: actionLabel.implicitWidth + 48
             radius: 26
@@ -234,6 +265,8 @@ FocusScope {
                 page.openSources();
             else if (key === "sort")
                 page.sortRequested();
+            else if (key === "credits" && page.credits.length)
+                creditsPanel.open();
         }
     }
 
@@ -423,6 +456,94 @@ FocusScope {
                 decrementCurrentIndex();
             else
                 actions.forceActiveFocus();
+        }
+    }
+
+    // ----- Distribution et genres : OK sur une personne -> recherche ; sur un genre -> Decouvrir -----
+    Rectangle {
+        id: creditsPanel
+        visible: false
+        anchors { right: parent.right; top: parent.top; bottom: parent.bottom; topMargin: 40; bottomMargin: 40; rightMargin: T.margin }
+        width: 520
+        radius: T.radius
+        color: Qt.rgba(0.07, 0.09, 0.13, 0.97)
+        border.color: T.line
+        z: 10
+
+        function open() {
+            visible = true;
+            creditsList.currentIndex = 0;
+            creditsList.forceActiveFocus();
+        }
+        function close() {
+            visible = false;
+            actions.forceActiveFocus();
+        }
+
+        Text {
+            x: 24
+            y: 18
+            text: "Distribution et genres"
+            color: T.text
+            font.pixelSize: T.fontBody + 2
+            font.bold: true
+        }
+        Text {
+            x: 24
+            y: 50
+            width: parent.width - 48
+            text: "OK sur un nom : ses films et séries (recherche) · sur un genre : Découvrir"
+            color: T.textDim
+            font.pixelSize: T.fontTiny + 1
+            wrapMode: Text.Wrap
+        }
+        ListView {
+            id: creditsList
+            anchors { left: parent.left; right: parent.right; top: parent.top; bottom: parent.bottom; topMargin: 96; bottomMargin: 16; leftMargin: 12; rightMargin: 12 }
+            clip: true
+            model: page.credits
+            highlightMoveDuration: 0
+            delegate: Rectangle {
+                readonly property bool focused: creditsList.activeFocus && ListView.isCurrentItem
+                width: creditsList.width
+                height: 46
+                radius: T.radiusSmall
+                color: focused ? T.text : "transparent"
+                Text {
+                    x: 14
+                    width: 120
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: modelData.role
+                    color: parent.focused ? T.bg : T.textDim
+                    font.pixelSize: T.fontSmall
+                }
+                Text {
+                    x: 140
+                    width: parent.width - 154
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: modelData.name
+                    color: parent.focused ? T.bg : T.text
+                    font.pixelSize: T.fontSmall + 1
+                    font.bold: true
+                    elide: Text.ElideRight
+                }
+            }
+            function choose() {
+                const c = page.credits[currentIndex];
+                creditsPanel.close();
+                if (c.kind === "genre")
+                    page.genreChosen(c.name);
+                else
+                    page.personChosen(c.name);
+            }
+            Keys.onReturnPressed: choose()
+            Keys.onEnterPressed: choose()
+            Keys.onPressed: {
+                if (event.key === Qt.Key_Back || event.key === Qt.Key_Backspace || event.key === Qt.Key_Escape) {
+                    event.accepted = true;
+                    creditsPanel.close();
+                }
+            }
         }
     }
 }

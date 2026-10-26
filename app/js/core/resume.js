@@ -95,7 +95,32 @@ function pickSubtitle(options, pref, audioLanguage) {
 
 // Episode a proposer en ouvrant une serie : celui en cours le plus recent, sinon le suivant
 // du dernier episode vu, sinon null (premiere visite).
-function seriesResume(meta, positions, accountId) {
+// libraryItem (facultatif) : element de la bibliotheque Stremio (reprise faite sur un autre
+// appareil) ; le plus recent des deux l'emporte.
+function seriesResume(meta, positions, accountId, libraryItem) {
+    const fromLibrary = libraryResume(meta, libraryItem);
+    const local = localSeriesResume(meta, positions, accountId);
+    if (!fromLibrary)
+        return local ? local.video : null;
+    if (!local || fromLibrary.at > local.at)
+        return fromLibrary.video;
+    return local.video;
+}
+
+function libraryResume(meta, item) {
+    const s = item && item.state;
+    if (!s || !s.video_id)
+        return null;
+    const video = ((meta && meta.videos) || []).find(v => v.id === s.video_id);
+    if (!video)
+        return null;
+    const at = Date.parse(s.lastWatched || item._mtime || "") || 0;
+    // Episode termine (plus de position) et vu : le suivant.
+    const ended = !(s.timeOffset > 0) && s.flaggedWatched;
+    return { video: ended ? nextEpisode(meta, video.id) || video : video, at: at };
+}
+
+function localSeriesResume(meta, positions, accountId) {
     const videos = ((meta && meta.videos) || []).filter(v => typeof v.season === "number" && v.season > 0);
     let best = null;
     let bestAt = -1;
@@ -108,5 +133,5 @@ function seriesResume(meta, positions, accountId) {
     });
     if (!best)
         return null;
-    return best.entry.done ? nextEpisode(meta, best.video.id) : best.video;
+    return { video: best.entry.done ? nextEpisode(meta, best.video.id) : best.video, at: best.entry.at };
 }

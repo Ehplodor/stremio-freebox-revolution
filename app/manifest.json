@@ -2,7 +2,7 @@
     "name": "Revo Stream",
     "identifier": "com.ehplodor.revostream",
     "description": "Films et séries avec vos addons compatibles Stremio, sans PC",
-    "version": "2.1.0",
+    "version": "2.4.0",
     "capabilities": {
         "net_wan": "required",
         "net_lan": "required",

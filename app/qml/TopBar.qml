@@ -8,7 +8,7 @@ FocusScope {
     height: 72
 
     property int current: 0
-    property var tabs: ["Accueil", "Recherche", "Réglages"]
+    property var tabs: ["Accueil", "Découvrir", "Recherche", "Réglages"]
     property string pcName: ""
     property bool pcOk: true
     property string account: ""          // initiale ou "" si pas de compte

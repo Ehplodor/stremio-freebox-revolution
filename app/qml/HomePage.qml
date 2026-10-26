@@ -13,9 +13,15 @@ FocusScope {
     property var progressOf: null
     property alias count: rows.count
     signal activated(var meta, string fallbackType)
+    signal expandRequested(var row)      // « Tout voir » : { kind, transportUrl, type, cid, name, addonName, skip, metas }
     signal up()                          // Haut depuis la premiere rangee : barre du haut
 
     readonly property var heroMeta: rows.currentItem ? rows.currentItem.currentMeta : null
+
+    // Rangee longue : tuile « Tout voir » en tete.
+    function withAll(metas) {
+        return metas.length > 6 ? [{ id: "__all", name: "Tout voir" }].concat(metas) : metas;
+    }
 
     function itemAt(i) {
         return rows.itemAtIndex(i);
@@ -184,18 +190,25 @@ FocusScope {
             progressOf: page.progressOf
             title: model.kind === "catalog" ? model.name + "  ·  " + model.addonName : model.name
             focus: ListView.isCurrentItem
-            onActivated: page.activated(meta, model.type)
+            onActivated: {
+                if (meta.id === "__all")
+                    page.expandRequested({ kind: model.kind, transportUrl: model.transportUrl, type: model.type, cid: model.cid,
+                                           name: model.name, addonName: model.addonName, skip: model.skip,
+                                           metas: row.metas.slice(1) });
+                else
+                    page.activated(meta, model.type);
+            }
             onCurrentMetaChanged: if (ListView.isCurrentItem) heroDelay.restart()
             Component.onCompleted: {
                 if (model.kind !== "catalog") {
-                    row.metas = page.localRows[model.kind] || [];
+                    row.metas = page.withAll(page.localRows[model.kind] || []);
                     if (ListView.isCurrentItem) heroDelay.restart();
                     return;
                 }
-                const ref = { transportUrl: model.transportUrl, type: model.type, id: model.cid, name: model.name };
+                const ref = { transportUrl: model.transportUrl, type: model.type, id: model.cid, name: model.name, addonName: model.addonName };
                 row.status = "chargement";
                 page.loadCatalog(ref).then(metas => {
-                    row.metas = metas;
+                    row.metas = page.withAll(metas);
                     row.status = metas.length ? "" : "vide";
                     if (row.ListView.isCurrentItem)
                         heroDelay.restart();
