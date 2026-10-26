@@ -2,7 +2,8 @@ import QtQuick 2.15
 import "../js/theme.js" as T
 
 // Compte Stremio : affiche le code de liaison et son QR code, ou le compte lie.
-// OK : creer un nouveau code (non lie) ou se deconnecter (lie). Retour : accueil.
+// OK : creer un nouveau code (non lie) ou se deconnecter (lie, OK une 2e fois pour confirmer).
+// Retour : accueil.
 FocusScope {
     id: page
 
@@ -11,6 +12,7 @@ FocusScope {
     property string link: ""
     property string qrcode: ""
     property string status: ""
+    property bool confirming: false     // 1er OK sur un compte lie : demande de confirmation
     signal newCode()
     signal unlink()
 
@@ -38,7 +40,9 @@ FocusScope {
             anchors.horizontalCenter: parent.horizontalCenter
             color: T.text
             font.pixelSize: 26
-            text: "Connecté : " + page.email + "\n\nOK pour se déconnecter de ce Player."
+            text: "Connecté : " + page.email + "\n\n" + (page.confirming
+                ? "Se déconnecter de ce Player ?\nOK pour confirmer  ·  Retour pour annuler"
+                : "OK pour se déconnecter de ce Player.")
             horizontalAlignment: Text.AlignHCenter
         }
 
@@ -97,7 +101,17 @@ FocusScope {
         }
     }
 
+    function activate() {
+        if (!page.email)
+            page.newCode();
+        else if (page.confirming)
+            page.unlink();
+        else
+            page.confirming = true;
+    }
+
     focus: true
-    Keys.onReturnPressed: page.email ? page.unlink() : page.newCode()
-    Keys.onEnterPressed: page.email ? page.unlink() : page.newCode()
+    onVisibleChanged: confirming = false
+    Keys.onReturnPressed: activate()
+    Keys.onEnterPressed: activate()
 }
