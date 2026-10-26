@@ -77,3 +77,16 @@ test("datastorePut : forme de la requete", async () => {
     assert.equal(sent.body.authKey, "KEY");
     assert.equal(sent.body.changes[0]._id, "tt15239678");
 });
+
+test("« Ma liste » : ajout puis retrait, visible dans « Ma bibliotheque »", () => {
+    const fresh = library.fromMeta(MOVIE, T0);
+    assert.ok(!library.isListed(fresh));
+    const listed = library.setListed(fresh, true, T0 + 1000);
+    assert.ok(library.isListed(listed));
+    assert.equal(fresh.removed, true, "l'ancien element n'est pas modifie");
+    assert.equal(account.library([listed]).length, 1);
+    const unlisted = library.setListed(listed, false, T0 + 2000);
+    assert.ok(!library.isListed(unlisted));
+    assert.equal(account.library([unlisted]).length, 0);
+    assert.equal(unlisted._mtime, "2026-10-20T20:00:02.000Z");
+});

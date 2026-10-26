@@ -147,3 +147,89 @@ function metas(response, type) {
 function lastPage(response) {
     return !response || !response.results || !response.results.length || (response.page || 1) >= (response.total_pages || 1);
 }
+
+// ----- Personnes (filmographie) et collections -----
+
+function findUrl(key, imdbId) {
+    return API + "/find/" + encodeURIComponent(imdbId) + "?" + query({ api_key: key, external_source: "imdb_id", language: LANGUAGE });
+}
+
+function movieUrl(key, tmdbId) {
+    return API + "/movie/" + tmdbId + "?" + query({ api_key: key, language: LANGUAGE });
+}
+
+function collectionUrl(key, collectionId) {
+    return API + "/collection/" + collectionId + "?" + query({ api_key: key, language: LANGUAGE });
+}
+
+function searchUrl(key, what, text) {
+    return API + "/search/" + what + "?" + query({ api_key: key, language: LANGUAGE, query: text, include_adult: "false" });
+}
+
+function creditsUrl(key, personId) {
+    return API + "/person/" + personId + "/combined_credits?" + query({ api_key: key, language: LANGUAGE });
+}
+
+// Film TMDB d'un identifiant IMDb (reponse de /find) ; null sinon.
+function foundMovieId(response) {
+    const r = response && response.movie_results && response.movie_results[0];
+    return r ? r.id : null;
+}
+
+// Collection d'un film (reponse de /movie) : { id, name } ou null.
+function collectionOf(response) {
+    const c = response && response.belongs_to_collection;
+    return c && c.id ? { id: c.id, name: c.name || "" } : null;
+}
+
+// Films d'une collection, dans l'ordre de sortie (sans date : a la fin).
+function collectionMetas(response) {
+    const parts = ((response && response.parts) || []).slice();
+    parts.sort((a, b) => (a.release_date || "9999").localeCompare(b.release_date || "9999"));
+    return parts.map(r => toMeta(r, "movie"));
+}
+
+// Filmographie (reponse de /combined_credits) : films et series, joues ou realises, une fois
+// chacun, les plus connus d'abord (nombre de votes). Emissions sans affiche ecartees.
+function filmography(response) {
+    const all = ((response && response.cast) || []).concat((response && response.crew) || []);
+    const seen = {};
+    const out = [];
+    all.forEach(r => {
+        if (r.media_type !== "movie" && r.media_type !== "tv")
+            return;
+        const k = r.media_type + ":" + r.id;
+        if (seen[k] || !r.poster_path)
+            return;
+        seen[k] = true;
+        out.push(r);
+    });
+    out.sort((a, b) => (b.vote_count || 0) - (a.vote_count || 0));
+    return out.map(r => toMeta(r, r.media_type === "tv" ? "series" : "movie"));
+}
+
+// Resultats de recherche de personnes et de collections, en tuiles.
+function personMetas(response) {
+    return ((response && response.results) || []).filter(p => p.profile_path)
+        .map(p => ({ id: "tmdbperson:" + p.id, type: "person", name: p.name || "",
+                     poster: IMAGES + "w342" + p.profile_path }));
+}
+
+function collectionTiles(response) {
+    return ((response && response.results) || []).filter(c => c.poster_path)
+        .map(c => ({ id: "tmdbcol:" + c.id, type: "collection", name: c.name || "",
+                     poster: IMAGES + "w342" + c.poster_path }));
+}
+
+// Personne la plus connue d'une recherche par nom ; null sinon.
+function bestPerson(response) {
+    const list = ((response && response.results) || []).slice();
+    list.sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
+    return list[0] ? { id: list[0].id, name: list[0].name } : null;
+}
+
+// "tmdbperson:287" -> { kind: "person", id: "287" } ; "tmdbcol:10" -> { kind: "collection", ... }
+function tileKind(id) {
+    const m = /^tmdb(person|col):(\d+)$/.exec(String(id));
+    return m ? { kind: m[1] === "col" ? "collection" : "person", id: m[2] } : null;
+}

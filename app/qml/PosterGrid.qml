@@ -17,13 +17,25 @@ GridView {
     cellWidth: T.posterW + 24
     cellHeight: T.posterH + 64
     clip: true
-    model: metas
+    model: []
     cacheBuffer: 600
     highlightMoveDuration: T.anim
     preferredHighlightBegin: 0
     preferredHighlightEnd: cellHeight
     highlightRangeMode: GridView.ApplyRange
     keyNavigationEnabled: true
+    // Suite chargee (meme debut de liste) : la selection reste ou elle etait, au lieu de revenir
+    // au premier titre.
+    onMetasChanged: {
+        const old = model || [];
+        const list = metas || [];
+        const keep = old.length && list.length >= old.length && list[0].id === old[0].id ? currentIndex : -1;
+        model = list;
+        if (keep > 0 && count) {
+            currentIndex = Math.min(keep, count - 1);
+            positionViewAtIndex(currentIndex, GridView.Contain);
+        }
+    }
     onCurrentIndexChanged: {
         if (count && currentIndex >= count - 2 * columns && canLoadMore)
             moreWanted();

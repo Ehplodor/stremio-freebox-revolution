@@ -3,7 +3,8 @@ import "../js/theme.js" as T
 import "../js/core/addons.js" as Addons
 
 // Fiche d'un film ou d'une serie.
-// Haut : fond, titre, informations, boutons (Lecture / Sources / Tri).
+// Haut : fond, titre, informations, boutons (Lecture / Sources / Tri / Distribution / Ma liste /
+// Collection).
 // Bas : episodes (serie) ou liste des sources (bouton Sources).
 FocusScope {
     id: page
@@ -16,6 +17,10 @@ FocusScope {
     property string resumeText: ""        // "Reprendre à 12:34" si une position existe
     property bool showingSources: false
     property var progressOf: null         // function(videoId) -> 0..1
+    property bool inList: false           // dans « Ma liste » (bibliotheque Stremio)
+    property var collection: null         // { id, name } : collection TMDB du film
+    signal myListToggled()
+    signal collectionChosen()
     signal episodeChosen(var video)
     signal streamChosen(var item)
     signal playBest()
@@ -70,7 +75,8 @@ FocusScope {
 
     function focusStreams() {
         // Appele quand les premiers flux arrivent : on reste sur les boutons (Lecture pret).
-        if (!showingSources && !episodeList.activeFocus && !seasonTabs.activeFocus)
+        // Panneau « Distribution et genres » ouvert : il garde le focus.
+        if (!showingSources && !episodeList.activeFocus && !seasonTabs.activeFocus && !creditsPanel.visible)
             actions.forceActiveFocus();
     }
 
@@ -224,7 +230,8 @@ FocusScope {
         focus: true
         // Liste fixe : la recalculer (nombre de sources, reprise) remettrait la selection sur "Lecture"
         // a chaque reponse d'addon. Seuls les libelles changent (label()).
-        model: ["play", "sources", "sort", "credits"]
+        // « collection » en dernier, cache tant que le film n'en a pas.
+        model: ["play", "sources", "sort", "credits", "mylist", "collection"]
         function label(key) {
             if (key === "play")
                 return page.resumeText ? "▶  " + page.resumeText : "▶  Lecture";
@@ -232,13 +239,21 @@ FocusScope {
                 return "Sources" + (page.streams.length ? "  (" + page.streams.length + ")" : "");
             if (key === "credits")
                 return "Distribution et genres";
-            return "Tri des sources";
+            if (key === "mylist")
+                return page.inList ? "✓  Dans ma liste" : "+  Ma liste";
+            if (key === "collection")
+                return page.collection ? "Collection : " + page.collection.name : "";
+            return "Tri";
         }
         delegate: Rectangle {
             readonly property bool focused: actions.activeFocus && ListView.isCurrentItem
-            readonly property bool enabledAction: modelData === "sort" || (modelData === "credits" ? page.credits.length > 0 : page.streams.length > 0)
+            readonly property bool enabledAction: modelData === "sort" || modelData === "mylist" || modelData === "collection"
+                                                  || (modelData === "credits" ? page.credits.length > 0 : page.streams.length > 0)
+            visible: modelData !== "collection" || !!page.collection
             height: 52
-            width: actionLabel.implicitWidth + 48
+            // La collection prend la place restante (titre abrege si besoin).
+            width: !visible ? 0 : modelData === "collection" ? Math.min(actionLabel.implicitWidth + 48, 260)
+                                                             : actionLabel.implicitWidth + 48
             radius: 26
             color: focused ? T.text : modelData === "play" ? T.accent : Qt.rgba(1, 1, 1, 0.12)
             opacity: enabledAction ? 1 : 0.45
@@ -248,6 +263,8 @@ FocusScope {
             Text {
                 id: actionLabel
                 anchors.centerIn: parent
+                width: Math.min(implicitWidth, parent.width - 48)
+                elide: Text.ElideRight
                 text: actions.label(modelData)
                 color: parent.focused ? T.bg : T.text
                 font.pixelSize: T.fontBody
@@ -257,6 +274,10 @@ FocusScope {
         Keys.onReturnPressed: activate()
         Keys.onEnterPressed: activate()
         Keys.onDownPressed: (page.isSeries ? seasonTabs : streamList).forceActiveFocus()
+        Keys.onRightPressed: {
+            if (currentIndex + 1 < count && (model[currentIndex + 1] !== "collection" || page.collection))
+                incrementCurrentIndex();
+        }
         function activate() {
             const key = model[currentIndex];
             if (key === "play" && page.streams.length)
@@ -267,6 +288,10 @@ FocusScope {
                 page.sortRequested();
             else if (key === "credits" && page.credits.length)
                 creditsPanel.open();
+            else if (key === "mylist")
+                page.myListToggled();
+            else if (key === "collection" && page.collection)
+                page.collectionChosen();
         }
     }
 
@@ -492,7 +517,7 @@ FocusScope {
             x: 24
             y: 50
             width: parent.width - 48
-            text: "OK sur un nom : ses films et séries (recherche) · sur un genre : Découvrir"
+            text: "OK sur un nom : sa filmographie · sur un genre : Découvrir"
             color: T.textDim
             font.pixelSize: T.fontTiny + 1
             wrapMode: Text.Wrap

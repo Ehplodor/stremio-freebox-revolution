@@ -44,7 +44,7 @@ FocusScope {
         anchors { left: heading.left; top: heading.bottom; topMargin: 4 }
         text: (page.metas.length ? page.metas.length + " titres" : "")
               + (page.status === "chargement" ? (page.metas.length ? "  ·  " : "") + "chargement…" : "")
-              + "   ·   Retour : accueil"
+              + "   ·   Retour pour revenir"
         color: T.textDim
         font.pixelSize: T.fontSmall
     }

@@ -594,7 +594,7 @@ Item {
 
     // Titre TMDB : fiche et sources via son identifiant IMDb (Cinemeta, addons de sources).
     function openDiscovered(meta) {
-        const type = meta.type || discoverState.type;
+        const type = meta.type || discoverState.type || "movie";
         if (!Discover.isTmdbId(meta.id) || (!tmdbKey && !tmdbAddon)) {
             openMeta(type, meta.id);
             return;
@@ -775,9 +775,61 @@ Item {
     }
 
     // Fiche : acteur, realisateur, scenariste -> recherche ; genre -> Decouvrir.
+    // Nom d'une fiche : filmographie TMDB (cle API) ; sans cle, recherche par nom dans les addons.
     function openPerson(name) {
-        showTab(tab("search"));
-        search.setQuery(name);
+        if (!tmdbKey) {
+            showTab(tab("search"));
+            search.setQuery(name);
+            toast("Filmographie complète : avec la clé TMDB (addon TMDB du compte)");
+            return;
+        }
+        openTmdbList("Filmographie : " + name, Http.fetchJson(Tmdb.searchUrl(tmdbKey, "person", name)).then(r => {
+            const p = Tmdb.bestPerson(r);
+            if (!p)
+                throw new Error("personne introuvable sur TMDB");
+            return Http.fetchJson(Tmdb.creditsUrl(tmdbKey, p.id)).then(Tmdb.filmography);
+        }));
+    }
+
+    function openFilmography(personId, name) {
+        openTmdbList("Filmographie : " + name, Http.fetchJson(Tmdb.creditsUrl(tmdbKey, personId)).then(Tmdb.filmography));
+    }
+
+    function openCollection(collectionId, name) {
+        openTmdbList("Collection : " + name, cachedFetch(Tmdb.collectionUrl(tmdbKey, collectionId)).then(Tmdb.collectionMetas));
+    }
+
+    // Liste TMDB (filmographie, collection) dans la grille « Tout voir ».
+    function openTmdbList(title, promise) {
+        const row = { kind: "tmdb", type: "", name: title };
+        gridRow = row;
+        screen = "grid";
+        grid.reset(title);
+        grid.metas = [];
+        grid.status = "chargement";
+        promise.then(metas => {
+            if (gridRow !== row)
+                return;
+            grid.metas = metas;
+            grid.status = "fin";
+        }).catch(e => {
+            log("TMDB : " + e);
+            if (gridRow === row)
+                grid.status = "erreur";
+        });
+    }
+
+    // Tuile choisie (grille, recherche, Decouvrir) : personne, collection, titre TMDB ou fiche.
+    function openAny(meta, fallbackType) {
+        const tile = Tmdb.tileKind(meta.id);
+        if (tile && tile.kind === "person")
+            openFilmography(tile.id, meta.name);
+        else if (tile)
+            openCollection(tile.id, meta.name);
+        else if (Discover.isTmdbId(meta.id))
+            openDiscovered(Object.assign({}, meta, { type: meta.type || fallbackType }));
+        else
+            openMeta(meta.type || fallbackType, meta.id);
     }
 
     // ===================== Grille « Tout voir » =====================
@@ -816,8 +868,9 @@ Item {
 
     function back() {
         if (screen === "grid") {
+            const fromTmdb = gridRow && gridRow.kind === "tmdb";
             gridRow = null;
-            showTab(0);
+            showTab(fromTmdb ? tab(lastTab) : 0);
             return;
         }
         if (screen === "player") {
@@ -859,6 +912,8 @@ Item {
         details.episodes = [];
         details.streams = [];
         details.streamsStatus = "";
+        details.collection = null;
+        details.inList = Library.isListed(libraryItems.find(i => i._id === id));
         details.reset();
         screen = "details";
         details.forceActiveFocus();
@@ -867,6 +922,8 @@ Item {
                 return;
             current.meta = meta;
             details.meta = meta;
+            if (type === "movie")
+                loadCollection(opened, meta.imdb_id || id);
             const episodes = [];
             Addons.seasons(meta).forEach(s => s.episodes.forEach(v => episodes.push(v)));
             if (type === "series" && episodes.length) {
@@ -889,6 +946,44 @@ Item {
             log("fiche en échec : " + e);
             details.streamsStatus = "Fiche indisponible (" + e.message + ")";
         });
+    }
+
+    // Collection TMDB du film (cle API) : bouton « Collection : … » de la fiche.
+    function loadCollection(opened, imdbId) {
+        if (!tmdbKey || !/^tt\d+$/.test(imdbId))
+            return;
+        Http.fetchJson(Tmdb.findUrl(tmdbKey, imdbId)).then(r => {
+            const id = Tmdb.foundMovieId(r);
+            return id ? Http.fetchJson(Tmdb.movieUrl(tmdbKey, id)).then(Tmdb.collectionOf) : null;
+        }).then(c => {
+            if (current === opened && c)
+                details.collection = c;
+        }).catch(e => log("TMDB : collection indisponible (" + e + ")"));
+    }
+
+    // « Ma liste » : bibliotheque Stremio (comme le bouton « Ajouter a la bibliotheque »).
+    function toggleMyList() {
+        if (!current)
+            return;
+        const now = Date.now();
+        const meta = current.meta || { id: current.id, type: current.type, name: "" };
+        const before = libraryItems.find(i => i._id === current.id)
+            || Library.fromMeta({ id: current.id, type: current.type, name: meta.name, poster: meta.poster,
+                                  posterShape: meta.posterShape }, now);
+        const listed = !Library.isListed(before);
+        const item = Library.setListed(before, listed, now);
+        libraryItems = Library.upsert(libraryItems, item);
+        details.inList = listed;
+        if (!authKey) {
+            settings.localLibrary = JSON.stringify(Library.trimLocal(libraryItems));
+        } else {
+            const pending = Object.assign({}, libraryPending);
+            pending[item._id] = item;
+            libraryPending = pending;
+            pushLibrary();
+        }
+        refreshContinueRow();
+        toast(listed ? "Ajouté à « Ma bibliothèque »" : "Retiré de « Ma bibliothèque »");
     }
 
     function selectEpisode(video) {
@@ -1534,20 +1629,22 @@ Item {
     }
 
     // Rangee « Continuer a regarder » de l'accueil recreee avec la bibliotheque a jour.
+    // Rangees « Continuer a regarder » et « Ma bibliotheque » de l'accueil recreees avec la
+    // bibliotheque a jour.
     function refreshContinueRow() {
         localRows = libraryRows();
-        let i = -1;
-        for (let k = 0; k < rowsModel.count; k++) {
-            if (rowsModel.get(k).kind === "continue")
-                i = k;
+        for (let k = rowsModel.count - 1; k >= 0; k--) {
+            const kind = rowsModel.get(k).kind;
+            if (kind === "continue" || kind === "library")
+                rowsModel.remove(k);
         }
-        if (i !== -1)
-            rowsModel.remove(i);
-        if (!localRows.continue.length)
-            return;
-        const at = rowsModel.count && rowsModel.get(0).kind === "link" ? 1 : 0;
-        rowsModel.insert(i !== -1 ? i : at, { kind: "continue", transportUrl: "", addonName: "Compte", type: "", cid: "",
-                                              name: "Continuer à regarder", skip: false });
+        let at = rowsModel.count && rowsModel.get(0).kind === "link" ? 1 : 0;
+        if (localRows.continue.length)
+            rowsModel.insert(at++, { kind: "continue", transportUrl: "", addonName: "Compte", type: "", cid: "",
+                                     name: "Continuer à regarder", skip: false });
+        if (localRows.library.length)
+            rowsModel.insert(at, { kind: "library", transportUrl: "", addonName: "Compte", type: "", cid: "",
+                                   name: "Ma bibliothèque", skip: false });
     }
 
     function playbackFailed(reason) {
@@ -1622,11 +1719,12 @@ Item {
         const token = {};
         search.token = token;
         const groups = refs.map(() => null);
+        const tmdbGroups = [null, null];     // personnes, collections (cle TMDB)
         const started = Date.now();
         const times = [];
         let answered = 0;
         const show = () => {
-            const list = groups.filter(g => g && g.metas.length);
+            const list = tmdbGroups.concat(groups).filter(g => g && g.metas.length);
             if (!search.resultsFocused || answered === refs.length)
                 search.results = list;
             search.status = answered < refs.length
@@ -1634,6 +1732,16 @@ Item {
                 : list.length ? "" : "Aucun résultat pour « " + text + " »";
         };
         show();
+        if (tmdbKey) {
+            [["person", "Personnes · TMDB", Tmdb.personMetas], ["collection", "Collections · TMDB", Tmdb.collectionTiles]].forEach((w, i) => {
+                Http.fetchJson(Tmdb.searchUrl(tmdbKey, w[0], text)).then(w[2], () => []).then(metas => {
+                    if (search.token !== token)
+                        return;
+                    tmdbGroups[i] = { title: w[1], metas: metas.slice(0, 20) };
+                    show();
+                });
+            });
+        }
         refs.forEach((ref, i) => {
             const t0 = Date.now();
             client.catalog(ref, { search: text }).then(metas => metas, () => []).then(metas => {
@@ -2093,7 +2201,7 @@ Item {
             visible: app.screen === "discover"
             progressOf: app.metaProgress
             onChanged: app.discoverChanged(key, value)
-            onActivated: app.openDiscovered(meta)
+            onActivated: app.openAny(meta, app.discoverState.type)
             onMoreWanted: { app.discoverAutoPages = 0; app.loadDiscover(false); }
             onUp: topBar.forceActiveFocus()
         }
@@ -2104,7 +2212,7 @@ Item {
             anchors.fill: parent
             visible: app.screen === "grid"
             progressOf: app.metaProgress
-            onActivated: app.openMeta(meta.type || (app.gridRow ? app.gridRow.type : ""), meta.id)
+            onActivated: app.openAny(meta, app.gridRow ? app.gridRow.type : "")
             onMoreWanted: app.loadGridPage()
         }
 
@@ -2117,7 +2225,7 @@ Item {
             companion: app.cfg.companion
             progressOf: app.metaProgress
             onSearch: app.runSearch(text)
-            onActivated: app.openMeta(meta.type, meta.id)
+            onActivated: app.openAny(meta, "movie")
             onUp: topBar.forceActiveFocus()
         }
 
@@ -2155,6 +2263,8 @@ Item {
             onPlayBest: app.playBest()
             onSortRequested: app.openSortSettings()
             onPersonChosen: app.openPerson(name)
+            onMyListToggled: app.toggleMyList()
+            onCollectionChosen: if (details.collection) app.openCollection(details.collection.id, details.collection.name)
             onGenreChosen: app.openDiscover({ type: app.current ? app.current.type : "movie", genre: genre })
         }
 

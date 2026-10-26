@@ -77,6 +77,20 @@ function updateProgress(item, videoId, positionMs, durationMs, watchedMs, now) {
     return out;
 }
 
+// « Ma liste » : ajouter a la bibliotheque (comme le bouton de Stremio) ou l'en retirer.
+// Renvoie un nouvel element (l'ancien n'est pas modifie).
+function setListed(item, listed, now) {
+    const out = JSON.parse(JSON.stringify(item));
+    out.removed = !listed;
+    out.temp = false;
+    out._mtime = iso(now);
+    return out;
+}
+
+function isListed(item) {
+    return !!item && !item.removed && !item.temp;
+}
+
 // Remplace (ou ajoute) un element dans une liste ; renvoie une nouvelle liste.
 function upsert(items, item) {
     const out = (items || []).filter(i => i._id !== item._id);
